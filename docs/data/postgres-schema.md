@@ -153,3 +153,19 @@ audit_logs(
   metadata jsonb
 )
 ```
+
+## API Keys
+```
+api_keys(
+  id uuid pk,
+  user_id uuid fk users,
+  prefix text,
+  key_hash text,
+  scopes text[],
+  ip_whitelist jsonb,
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+```
