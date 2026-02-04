@@ -1,0 +1,17 @@
+architecture: standalone
+
+auth:
+  enabled: true
+  password: cex_redis
+
+master:
+  persistence:
+    storageClass: ""
+    size: 4Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

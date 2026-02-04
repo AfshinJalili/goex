@@ -1,0 +1,17 @@
+replicaCount: 1
+
+persistentVolumes:
+  data:
+    storageClass: ""
+    size: 2Gi
+  wal:
+    storageClass: ""
+    size: 1Gi
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi

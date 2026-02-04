@@ -1,0 +1,23 @@
+replicaCount: 1
+
+secrets:
+  credentials:
+    PATRONI_SUPERUSER_PASSWORD: cex_ts_super
+    PATRONI_REPLICATION_PASSWORD: cex_ts_repl
+    PATRONI_admin_PASSWORD: cex_ts_admin
+
+persistentVolumes:
+  data:
+    storageClass: ""
+    size: 2Gi
+  wal:
+    storageClass: ""
+    size: 1Gi
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi

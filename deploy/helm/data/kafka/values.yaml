@@ -1,0 +1,16 @@
+controller:
+  replicaCount: 1
+  controllerOnly: false
+  persistence:
+    storageClass: ""
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+broker:
+  replicaCount: 0

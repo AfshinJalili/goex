@@ -36,5 +36,8 @@
 ## Base K8s Manifests
 See `deploy/k8s/README.md` for namespaces, network policies, and Kong Helm setup.
 
+## Data Services
+See `deploy/helm/data/README.md` for Helm-based data service deployments.
+
 ## Local Development
 For local docker-compose setup, see `docs/infra/dev.md`.

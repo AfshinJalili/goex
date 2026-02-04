@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cex-kafka
+description: Kafka chart for CEX data plane (wrapper)
+type: application
+version: 0.1.0
+appVersion: "3"
+
+dependencies:
+  - name: kafka
+    version: "32.4.3"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
