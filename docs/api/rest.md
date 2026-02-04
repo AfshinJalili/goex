@@ -38,8 +38,41 @@ Request:
 
 ## User & Account
 ### GET `/me`
+Response:
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "status": "active",
+  "kyc_level": "basic",
+  "mfa_enabled": false,
+  "created_at": "2026-02-04T12:00:00Z"
+}
+```
 ### GET `/accounts`
+Query params: `limit`, `cursor`
+
+Response:
+```json
+{
+  "accounts": [
+    { "id": "uuid", "type": "spot", "status": "active", "created_at": "2026-02-04T12:00:00Z" }
+  ],
+  "next_cursor": "base64(ts|id)"
+}
+```
 ### GET `/balances`
+Query params: `limit`, `cursor`
+
+Response:
+```json
+{
+  "balances": [
+    { "account_id": "uuid", "asset": "BTC", "available": "0.5", "locked": "0.1", "updated_at": "2026-02-04T12:00:00Z" }
+  ],
+  "next_cursor": "base64(ts|id)"
+}
+```
 
 ## Orders
 ### POST `/orders`

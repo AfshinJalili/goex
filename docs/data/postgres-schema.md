@@ -21,6 +21,7 @@ accounts(
   id uuid pk,
   user_id uuid fk users,
   type text, -- spot, fee, treasury
+  status text,
   created_at timestamptz
 )
 ```
