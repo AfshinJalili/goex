@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS markets;
+DROP TABLE IF EXISTS assets;
