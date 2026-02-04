@@ -1,0 +1,70 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Discover services
+        id: discover
+        run: |
+          services=$(find services -maxdepth 2 -name Dockerfile -print | xargs -n1 dirname | sed 's#^##' | tr '\n' ' ')
+          echo "services=$services" >> $GITHUB_OUTPUT
+
+      - name: Build and push images
+        if: steps.discover.outputs.services != ''
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          for svc in ${{ steps.discover.outputs.services }}; do
+            name=$(basename $svc)
+            image="ghcr.io/${repo}/${name}"
+            echo "Building $image"
+            docker build -t "$image:${{ github.sha }}" -t "$image:latest" "$svc"
+            docker push "$image:${{ github.sha }}"
+            docker push "$image:latest"
+          done
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.15.0
+
+      - name: Install Grype
+        uses: anchore/scan-action/download-grype@v3
+
+      - name: Generate SBOM and scan
+        if: steps.discover.outputs.services != ''
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          mkdir -p artifacts
+          for svc in ${{ steps.discover.outputs.services }}; do
+            name=$(basename $svc)
+            image="ghcr.io/${repo}/${name}:${{ github.sha }}"
+            syft "$image" -o json > "artifacts/${name}-sbom.json"
+            grype "$image" -o json > "artifacts/${name}-vuln.json" || true
+          done
+
+      - name: Upload artifacts
+        if: steps.discover.outputs.services != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-scans
+          path: artifacts

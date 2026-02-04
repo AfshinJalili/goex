@@ -1,0 +1,39 @@
+name: Deploy Staging (Stub)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for kubeconfig
+        id: kubeconfig
+        run: |
+          if [ -z "${{ secrets.KUBECONFIG_STAGING }}" ]; then
+            echo "KUBECONFIG_STAGING secret is not set. Skipping deploy." >&2
+            echo "has_kubeconfig=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "has_kubeconfig=true" >> $GITHUB_OUTPUT
+
+      - name: Setup kubeconfig
+        if: steps.kubeconfig.outputs.has_kubeconfig == 'true'
+        run: |
+          echo "${{ secrets.KUBECONFIG_STAGING }}" > kubeconfig
+          chmod 600 kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+
+      - name: Setup Helm
+        if: steps.kubeconfig.outputs.has_kubeconfig == 'true'
+        uses: azure/setup-helm@v4
+
+      - name: Deploy via Helm
+        if: steps.kubeconfig.outputs.has_kubeconfig == 'true'
+        run: |
+          helm upgrade --install cex deploy/helm/cex \
+            --namespace cex-core --create-namespace \
+            --values deploy/helm/cex/values.yaml
