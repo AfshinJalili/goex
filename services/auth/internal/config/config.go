@@ -34,6 +34,7 @@ type RateLimitConfig struct {
 type Config struct {
 	App             base.AppConfig
 	JWTSecret       string
+	JWTIssuer       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	Argon2          Argon2Params
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		App:             *appCfg,
 		JWTSecret:       envString("CEX_JWT_SECRET", "change-me"),
+		JWTIssuer:       envString("CEX_JWT_ISSUER", "cex-auth"),
 		AccessTokenTTL:  envDuration("CEX_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: envDuration("CEX_REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		Argon2: Argon2Params{

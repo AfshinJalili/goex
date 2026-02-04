@@ -141,7 +141,7 @@ func setupHandler(t *testing.T, store *memStore, tokens []string, now time.Time)
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
 	limiter := rate.New(100, time.Minute)
-	h := NewAuthHandler(store, logger, "test-secret", 15*time.Minute, 30*24*time.Hour, limiter)
+	h := NewAuthHandler(store, logger, "test-secret", 15*time.Minute, 30*24*time.Hour, limiter, "cex-auth")
 	h.TokenGen = &fakeTokenGen{tokens: tokens}
 	h.Clock = fakeClock{now: now}
 	return h

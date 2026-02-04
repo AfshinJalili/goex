@@ -1,0 +1,60 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: auth-service
+    url: http://auth:8080
+    routes:
+      - name: auth-login
+        paths: ["/auth/login"]
+        methods: ["POST"]
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 10
+              policy: local
+      - name: auth-refresh
+        paths: ["/auth/refresh"]
+        methods: ["POST"]
+      - name: auth-logout
+        paths: ["/auth/logout"]
+        methods: ["POST"]
+
+  - name: user-service
+    url: http://user:8080
+    routes:
+      - name: user-me
+        paths: ["/me"]
+        methods: ["GET"]
+      - name: user-accounts
+        paths: ["/accounts"]
+        methods: ["GET"]
+      - name: user-balances
+        paths: ["/balances"]
+        methods: ["GET"]
+      - name: user-api-keys
+        paths: ["/api-keys"]
+        methods: ["GET", "POST", "DELETE"]
+    plugins:
+      - name: jwt
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+
+  - name: trading-service
+    url: http://trading:8080
+    routes:
+      - name: trading-orders
+        paths: ["/orders"]
+        methods: ["GET", "POST", "DELETE"]
+        plugins:
+          - name: key-auth
+            config:
+              key_names: ["X-API-Key"]
+
+consumers:
+  - username: cex-auth
+    jwt_secrets:
+      - key: cex-auth
+        secret: ${JWT_SECRET}

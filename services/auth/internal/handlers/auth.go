@@ -44,6 +44,7 @@ type AuthHandler struct {
 	RateLimiter *rate.Limiter
 	TokenGen    security.TokenGenerator
 	Clock       Clock
+	Issuer      string
 }
 
 type loginRequest struct {
@@ -67,7 +68,7 @@ type errorResponse struct {
 	Message string `json:"message"`
 }
 
-func NewAuthHandler(store Store, logger *slog.Logger, jwtSecret string, accessTTL, refreshTTL time.Duration, limiter *rate.Limiter) *AuthHandler {
+func NewAuthHandler(store Store, logger *slog.Logger, jwtSecret string, accessTTL, refreshTTL time.Duration, limiter *rate.Limiter, issuer string) *AuthHandler {
 	return &AuthHandler{
 		Store:       store,
 		Logger:      logger,
@@ -77,6 +78,7 @@ func NewAuthHandler(store Store, logger *slog.Logger, jwtSecret string, accessTT
 		RateLimiter: limiter,
 		TokenGen:    security.DefaultTokenGenerator{},
 		Clock:       systemClock{},
+		Issuer:      issuer,
 	}
 }
 
@@ -124,7 +126,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		// Stub: accept any non-empty code for now
 	}
 
-	access, err := security.NewAccessToken(user.ID.String(), []string{"user"}, []string{"read"}, h.JWTSecret, h.AccessTTL, h.Clock.Now())
+	access, err := security.NewAccessToken(user.ID.String(), []string{"user"}, []string{"read"}, h.JWTSecret, h.AccessTTL, h.Clock.Now(), h.Issuer)
 	if err != nil {
 		h.Logger.Error("jwt sign failed", "error", err)
 		c.JSON(http.StatusInternalServerError, errorResponse{Code: "INTERNAL_ERROR", Message: "internal error"})
@@ -195,7 +197,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	access, err := security.NewAccessToken(token.UserID.String(), []string{"user"}, []string{"read"}, h.JWTSecret, h.AccessTTL, now)
+	access, err := security.NewAccessToken(token.UserID.String(), []string{"user"}, []string{"read"}, h.JWTSecret, h.AccessTTL, now, h.Issuer)
 	if err != nil {
 		h.Logger.Error("jwt sign failed", "error", err)
 		c.JSON(http.StatusInternalServerError, errorResponse{Code: "INTERNAL_ERROR", Message: "internal error"})

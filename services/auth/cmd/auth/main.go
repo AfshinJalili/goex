@@ -55,7 +55,7 @@ func main() {
 
 	store := storage.New(pool)
 	limiter := rate.New(cfg.RateLimit.LoginLimit, cfg.RateLimit.Window)
-	authHandler := handlers.NewAuthHandler(store, logger, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, limiter)
+	authHandler := handlers.NewAuthHandler(store, logger, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, limiter, cfg.JWTIssuer)
 
 	router := gin.New()
 	router.Use(httpmiddleware.RequestID())

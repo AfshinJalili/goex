@@ -36,6 +36,9 @@
 ## Base K8s Manifests
 See `deploy/k8s/README.md` for namespaces, network policies, and Kong Helm setup.
 
+## Kong Gateway (DB-less)
+See `deploy/kong/README.md` for the DB-less Kong declarative config and smoke tests.
+
 ## Data Services
 See `deploy/helm/data/README.md` for Helm-based data service deployments.
 

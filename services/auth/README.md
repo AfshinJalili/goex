@@ -21,6 +21,7 @@ Required env vars:
 Optional env vars:
 - `CEX_ACCESS_TOKEN_TTL` (default: `15m`)
 - `CEX_REFRESH_TOKEN_TTL` (default: `720h`)
+- `CEX_JWT_ISSUER` (default: `cex-auth`)
 - `CEX_ARGON2_MEMORY` (default: `65536`)
 - `CEX_ARGON2_ITERATIONS` (default: `3`)
 - `CEX_ARGON2_PARALLELISM` (default: `2`)
