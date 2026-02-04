@@ -8,6 +8,8 @@ users(
   password_hash text,
   status text,
   kyc_level text,
+  mfa_enabled boolean,
+  mfa_secret text,
   created_at timestamptz,
   updated_at timestamptz
 )
@@ -167,5 +169,20 @@ api_keys(
   revoked_at timestamptz,
   created_at timestamptz,
   updated_at timestamptz
+)
+```
+
+## Refresh Tokens
+```
+refresh_tokens(
+  id uuid pk,
+  user_id uuid fk users,
+  token_hash text,
+  expires_at timestamptz,
+  revoked_at timestamptz,
+  replaced_by uuid,
+  created_at timestamptz,
+  created_ip text,
+  user_agent text
 )
 ```
