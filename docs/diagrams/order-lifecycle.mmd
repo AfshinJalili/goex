@@ -10,12 +10,12 @@ sequenceDiagram
   C->>G: POST /orders
   G->>O: Auth + rate limit + validate
   O->>O: Risk checks + balance pre-check
-  O->>K: Publish order.accepted
-  K-->>M: order.accepted
+  O->>K: Publish orders.accepted
+  K-->>M: orders.accepted
   M->>M: Match in-memory order book
-  M->>K: Publish trade.executed
-  K-->>L: trade.executed
+  M->>K: Publish trades.executed
+  K-->>L: trades.executed
   L->>L: Settle (double-entry)
   L->>K: Publish ledger.entries + balances.updated
-  K-->>MD: balances.updated + trade.executed
+  K-->>MD: balances.updated + trades.executed
   MD-->>C: WebSocket updates

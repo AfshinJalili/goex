@@ -67,14 +67,14 @@ Support services:
 1. Client submits order via REST.
 2. API Gateway authenticates and rate limits.
 3. Order Ingest validates (format, balance, risk) and creates order record.
-4. Order Ingest publishes `order.accepted` to Kafka.
-5. Matching Engine consumes order events, matches in memory, emits `trade.executed` and `order.filled`.
+4. Order Ingest publishes `orders.accepted` to Kafka.
+5. Matching Engine consumes order events, matches in memory, emits `trades.executed`.
 6. Ledger Service consumes trade events, applies atomic settlement (buyer/seller + fees).
 7. Market Data Service updates order book and emits WebSocket updates.
 
 ### Deposit Flow
 1. Custody provider notifies a deposit webhook.
-2. Wallet Service verifies and writes `deposit.detected` event.
+2. Wallet Service verifies and writes `wallet.deposit.detected` event.
 3. Ledger Service credits user balance with idempotency key.
 4. Compliance Service updates AML risk profile and audit log.
 
@@ -83,7 +83,7 @@ Support services:
 2. Order Ingest validates balance and risk.
 3. Wallet Service creates custody provider withdrawal request.
 4. Provider signs and broadcasts; status updates flow via webhook.
-5. Ledger Service debits on `withdrawal.broadcast` and finalizes on `withdrawal.confirmed`.
+5. Ledger Service debits on `wallet.withdrawal.broadcast` and finalizes on `wallet.withdrawal.confirmed`.
 
 ## Data Model Overview
 - Postgres: users, accounts, orders, trades, ledger entries, fees, audit logs.
@@ -99,8 +99,8 @@ Kafka topics include:
 - `orders.accepted`, `orders.rejected`, `orders.cancelled`
 - `trades.executed`, `trades.settled`
 - `ledger.entries`, `balances.updated`
-- `wallet.deposits`, `wallet.withdrawals`
-- `market.depth`, `market.tickers`, `market.candles`
+- `wallet.deposit.detected`, `wallet.withdrawal.requested`, `wallet.withdrawal.broadcast`, `wallet.withdrawal.confirmed`
+- `market.depth`, `market.ticker`, `market.candles`
 
 See `docs/events/kafka-topics.md`.
 

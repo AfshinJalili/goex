@@ -1,5 +1,14 @@
 # REST API Specification (v1)
 
+## OpenAPI Specification
+A machine-readable OpenAPI 3.0 specification is available at `docs/api/openapi.yaml`
+
+To view interactive documentation locally, run: `make docs` or `./scripts/openapi-serve.sh`
+
+To validate the spec, run: `make docs-validate`
+
+The docs server will be available at http://localhost:8080
+
 ## Conventions
 - Base URL: `/api/v1`
 - Auth: JWT for user sessions; HMAC API keys for trading endpoints.
@@ -45,7 +54,7 @@ Response:
 }
 ```
 ### POST `/api-keys`
-Request:
+Request (label is optional):
 ```json
 { "label": "trading-bot", "scopes": ["trade", "read"], "ip_whitelist": ["1.2.3.4"] }
 ```
@@ -120,11 +129,11 @@ Request:
 ```
 Response:
 ```json
-{
-  "order_id": "ord_123",
-  "status": "accepted",
-  "received_at": "2026-02-04T12:00:00Z"
-}
+  {
+    "order_id": "ord_123",
+    "status": "accepted",
+    "created_at": "2026-02-04T12:00:00Z"
+  }
 ```
 
 ### DELETE `/orders/{order_id}`

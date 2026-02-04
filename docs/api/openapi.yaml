@@ -1,0 +1,1006 @@
+openapi: 3.0.3
+
+info:
+  title: CEX REST API
+  version: 1.0.0
+  description: REST API for the cryptocurrency exchange platform
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+paths:
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /me:
+    get:
+      tags:
+        - User
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /accounts:
+    get:
+      tags:
+        - User
+      summary: List user accounts
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Accounts list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /balances:
+    get:
+      tags:
+        - User
+      summary: List account balances
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Balances list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalancesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api-keys:
+    post:
+      tags:
+        - API Keys
+      summary: Create API key
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '200':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags:
+        - API Keys
+      summary: List API keys
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: API keys list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeysResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api-keys/{key_id}:
+    delete:
+      tags:
+        - API Keys
+      summary: Revoke API key
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: API key ID
+      responses:
+        '200':
+          description: API key revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /orders:
+    post:
+      tags:
+        - Trading
+      summary: Create order
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '200':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags:
+        - Trading
+      summary: List orders
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      parameters:
+        - name: symbol
+          in: query
+          schema:
+            type: string
+          description: Filter by trading pair
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by order status
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start time filter
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End time filter
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /orders/{order_id}:
+    delete:
+      tags:
+        - Trading
+      summary: Cancel order
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Order ID
+      responses:
+        '200':
+          description: Order cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: cancelled
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /trades:
+    get:
+      tags:
+        - Trading
+      summary: List trades
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      parameters:
+        - name: symbol
+          in: query
+          schema:
+            type: string
+          description: Filter by trading pair
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start time filter
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End time filter
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Trades list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trades:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /markets:
+    get:
+      tags:
+        - Market Data
+      summary: List all markets
+      x-implementation-status: planned
+      security: []
+      responses:
+        '200':
+          description: Markets list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  markets:
+                    type: array
+                    items:
+                      type: object
+
+  /markets/{symbol}/orderbook:
+    get:
+      tags:
+        - Market Data
+      summary: Get order book
+      x-implementation-status: planned
+      security: []
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Trading pair symbol
+      responses:
+        '200':
+          description: Order book data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /markets/{symbol}/ticker:
+    get:
+      tags:
+        - Market Data
+      summary: Get ticker data
+      x-implementation-status: planned
+      security: []
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Trading pair symbol
+      responses:
+        '200':
+          description: Ticker data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /markets/{symbol}/candles:
+    get:
+      tags:
+        - Market Data
+      summary: Get candlestick data
+      x-implementation-status: planned
+      security: []
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Trading pair symbol
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End time
+        - name: interval
+          in: query
+          schema:
+            type: string
+          description: Candle interval
+      responses:
+        '200':
+          description: Candlestick data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /deposits:
+    get:
+      tags:
+        - Deposits
+      summary: List deposits
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Deposits list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deposits:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /withdrawals:
+    get:
+      tags:
+        - Withdrawals
+      summary: List withdrawals
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Withdrawals list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  withdrawals:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Withdrawals
+      summary: Create withdrawal
+      x-implementation-status: planned
+      security:
+        - apiKeyAuth: []
+          apiSignature: []
+          apiTimestamp: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                asset:
+                  type: string
+                address:
+                  type: string
+                amount:
+                  type: string
+                network:
+                  type: string
+      responses:
+        '200':
+          description: Withdrawal created
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /fees:
+    get:
+      tags:
+        - Fees
+      summary: Get fee schedule
+      x-implementation-status: planned
+      security: []
+      responses:
+        '200':
+          description: Fee schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  maker_fee:
+                    type: string
+                  taker_fee:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API key identifier for HMAC authentication. Must be used together with X-API-Signature 
+        and X-API-Timestamp headers. The signature is computed using HMAC-SHA256 over the 
+        request method, path, query string, request body, and timestamp using the API key secret.
+    apiSignature:
+      type: apiKey
+      in: header
+      name: X-API-Signature
+      description: HMAC-SHA256 signature of the request (required with apiKeyAuth)
+    apiTimestamp:
+      type: apiKey
+      in: header
+      name: X-API-Timestamp
+      description: Unix timestamp in seconds for request signing (required with apiKeyAuth)
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+      description: Maximum number of items to return
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: Pagination cursor (opaque)
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        mfa_code:
+          type: string
+          description: MFA code if MFA is enabled
+
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+          description: Token expiration in seconds
+
+    MeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          example: active
+        kyc_level:
+          type: string
+          example: basic
+        mfa_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: spot
+        status:
+          type: string
+          example: active
+        created_at:
+          type: string
+          format: date-time
+
+    AccountsResponse:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+        next_cursor:
+          type: string
+          description: Pagination cursor for next page
+
+    Balance:
+      type: object
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        asset:
+          type: string
+          example: BTC
+        available:
+          type: string
+          example: "0.5"
+        locked:
+          type: string
+          example: "0.1"
+        updated_at:
+          type: string
+          format: date-time
+
+    BalancesResponse:
+      type: object
+      properties:
+        balances:
+          type: array
+          items:
+            $ref: '#/components/schemas/Balance'
+        next_cursor:
+          type: string
+          description: Pagination cursor for next page
+
+    CreateAPIKeyRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          example: trading-bot
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - read
+              - trade
+              - withdraw
+          example:
+            - read
+            - trade
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+          example:
+            - "1.2.3.4"
+
+    CreateAPIKeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        prefix:
+          type: string
+          example: ab12cd34
+        secret:
+          type: string
+          example: ck_dev_ab12cd34.<secret>
+        scopes:
+          type: array
+          items:
+            type: string
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    APIKeyItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        ip_whitelist:
+          type: array
+          items:
+            type: string
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    APIKeysResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyItem'
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - symbol
+        - side
+        - type
+        - quantity
+      properties:
+        symbol:
+          type: string
+          example: BTC-USD
+        side:
+          type: string
+          enum:
+            - buy
+            - sell
+        type:
+          type: string
+          enum:
+            - limit
+            - market
+        price:
+          type: string
+          description: Required for limit orders
+          example: "45000.00"
+        quantity:
+          type: string
+          example: "0.10"
+        time_in_force:
+          type: string
+          enum:
+            - GTC
+            - IOC
+            - FOK
+          default: GTC
+
+    OrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+        status:
+          type: string
+          example: accepted
+        created_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - RATE_LIMITED
+            - INSUFFICIENT_BALANCE
+            - ORDER_NOT_FOUND
+            - SYMBOL_HALTED
+            - INTERNAL_ERROR
+            - NOT_FOUND
+          description: |
+            - INVALID_REQUEST: Invalid request parameters
+            - UNAUTHORIZED: Authentication required or invalid credentials
+            - FORBIDDEN: Insufficient permissions
+            - RATE_LIMITED: Rate limit exceeded
+            - INSUFFICIENT_BALANCE: Insufficient balance for operation
+            - ORDER_NOT_FOUND: Order not found
+            - SYMBOL_HALTED: Trading halted for symbol
+            - INTERNAL_ERROR: Internal server error
+            - NOT_FOUND: Resource not found
+        message:
+          type: string
+          description: Human-readable error message
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INVALID_REQUEST
+            message: invalid payload
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: UNAUTHORIZED
+            message: invalid credentials
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FORBIDDEN
+            message: insufficient permissions
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: RATE_LIMITED
+            message: too many requests
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: NOT_FOUND
+            message: key not found
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: internal error

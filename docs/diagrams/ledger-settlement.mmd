@@ -4,8 +4,8 @@ sequenceDiagram
   participant L as Ledger Service
   participant P as Postgres
 
-  M->>K: trade.executed
-  K-->>L: trade.executed
+  M->>K: trades.executed
+  K-->>L: trades.executed
   L->>P: BEGIN TRANSACTION
   L->>P: Debit buyer quote account
   L->>P: Credit seller quote account
