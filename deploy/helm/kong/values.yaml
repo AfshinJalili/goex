@@ -1,0 +1,10 @@
+ingressController:
+  enabled: true
+  ingressClass: kong
+  ingressClassName: kong
+
+proxy:
+  type: LoadBalancer
+  tls:
+    enabled: true
+    secretName: kong-proxy-cert

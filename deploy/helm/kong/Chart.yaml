@@ -1,0 +1,11 @@
+apiVersion: v2
+name: kong-base
+description: Kong ingress base chart for CEX
+type: application
+version: 0.1.0
+appVersion: "3.x"
+
+dependencies:
+  - name: kong
+    version: "3.0.2"
+    repository: "https://charts.konghq.com"

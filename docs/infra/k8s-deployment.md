@@ -33,5 +33,8 @@
 - Build, test, security scan, deploy to staging.
 - Canary rollout for critical services.
 
+## Base K8s Manifests
+See `deploy/k8s/README.md` for namespaces, network policies, and Kong Helm setup.
+
 ## Local Development
 For local docker-compose setup, see `docs/infra/dev.md`.
