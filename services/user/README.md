@@ -6,7 +6,7 @@ Provides authenticated user/account/balance endpoints:
 - `GET /balances`
 
 ## Configuration
-Requires `CEX_JWT_SECRET` and Postgres connection env vars:
+Requires `CEX_JWT_SECRET` (explicitly set) and Postgres connection env vars:
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 
 ## Manual Test

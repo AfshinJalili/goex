@@ -42,9 +42,10 @@ func (f *fakeTokenGen) New() (string, string, error) {
 }
 
 type memStore struct {
-	mu     sync.Mutex
-	users  map[string]*storage.User
-	tokens map[string]*storage.RefreshToken
+	mu      sync.Mutex
+	users   map[string]*storage.User
+	tokens  map[string]*storage.RefreshToken
+	failGet bool
 }
 
 func newMemStore() *memStore {
@@ -67,6 +68,9 @@ func (m *memStore) GetUserByEmail(ctx context.Context, email string) (*storage.U
 func (m *memStore) GetRefreshTokenByHash(ctx context.Context, hash string) (*storage.RefreshToken, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.failGet {
+		return nil, errors.New("db down")
+	}
 	token, ok := m.tokens[hash]
 	if !ok {
 		return nil, pgx.ErrNoRows
@@ -259,6 +263,22 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 	newToken := store.tokens[computeHash("refresh-2")]
 	if newToken.RevokedAt == nil {
 		t.Fatalf("expected new token revoked after reuse detection")
+	}
+}
+
+func TestRefreshReturns500OnDBError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := newMemStore()
+	store.failGet = true
+
+	h := setupHandler(t, store, []string{"refresh-1"}, time.Now())
+	router := gin.New()
+	h.RegisterRoutes(router)
+
+	resp := performRequest(router, http.MethodPost, "/auth/refresh", refreshRequest{RefreshToken: "refresh-1"})
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.Code)
 	}
 }
 

@@ -11,7 +11,7 @@ This service provides authentication endpoints for login, token refresh, and log
 The service uses the shared `config.yaml` format and environment overrides.
 
 Required env vars:
-- `CEX_JWT_SECRET`
+- `CEX_JWT_SECRET` (must be set explicitly)
 - `POSTGRES_HOST`
 - `POSTGRES_PORT`
 - `POSTGRES_DB`

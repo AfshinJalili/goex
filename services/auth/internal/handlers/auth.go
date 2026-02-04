@@ -166,7 +166,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	token, err := h.Store.GetRefreshTokenByHash(c.Request.Context(), providedHash)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, errorResponse{Code: "UNAUTHORIZED", Message: "invalid token"})
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusUnauthorized, errorResponse{Code: "UNAUTHORIZED", Message: "invalid token"})
+			return
+		}
+		h.Logger.Error("refresh lookup failed", "error", err)
+		c.JSON(http.StatusInternalServerError, errorResponse{Code: "INTERNAL_ERROR", Message: "internal error"})
 		return
 	}
 

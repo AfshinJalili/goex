@@ -50,7 +50,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App:             *appCfg,
-		JWTSecret:       envString("CEX_JWT_SECRET", "change-me"),
+		JWTSecret:       envString("CEX_JWT_SECRET", ""),
 		JWTIssuer:       envString("CEX_JWT_ISSUER", "cex-auth"),
 		AccessTokenTTL:  envDuration("CEX_ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: envDuration("CEX_REFRESH_TOKEN_TTL", 30*24*time.Hour),

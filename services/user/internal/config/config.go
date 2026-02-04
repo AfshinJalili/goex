@@ -31,7 +31,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App:       *appCfg,
-		JWTSecret: envString("CEX_JWT_SECRET", "change-me"),
+		JWTSecret: envString("CEX_JWT_SECRET", ""),
 		DB: DBConfig{
 			Host:     envString("POSTGRES_HOST", "localhost"),
 			Port:     envInt("POSTGRES_PORT", 5432),

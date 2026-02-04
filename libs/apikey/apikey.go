@@ -3,6 +3,7 @@ package apikey
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
@@ -75,7 +76,7 @@ func Verify(key string, record Record, clientIP string) error {
 	}
 
 	hash := Hash(prefix, secret)
-	if !strings.EqualFold(hash, record.KeyHash) {
+	if !constantTimeEqual(hash, record.KeyHash) {
 		return ErrInvalidKey
 	}
 
@@ -88,6 +89,15 @@ func Verify(key string, record Record, clientIP string) error {
 	}
 
 	return nil
+}
+
+func constantTimeEqual(a, b string) bool {
+	aa := strings.ToLower(a)
+	bb := strings.ToLower(b)
+	if len(aa) != len(bb) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(aa), []byte(bb)) == 1
 }
 
 func VerifyAPIKey(key string, record Record, clientIP string) (string, []string, error) {

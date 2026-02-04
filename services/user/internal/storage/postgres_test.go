@@ -12,6 +12,9 @@ func TestCursorRoundTrip(t *testing.T) {
 	ts := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
 
 	cursor := encodeCursor(ts, id)
+	if cursor == "" {
+		t.Fatalf("expected cursor")
+	}
 	decodedTS, decodedID, err := decodeCursor(cursor)
 	if err != nil {
 		t.Fatalf("decode error: %v", err)

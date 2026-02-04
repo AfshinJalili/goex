@@ -249,11 +249,11 @@ func clampLimit(limit int) int {
 
 func encodeCursor(ts time.Time, id uuid.UUID) string {
 	payload := fmt.Sprintf("%s|%s", ts.UTC().Format(time.RFC3339Nano), id.String())
-	return base64.StdEncoding.EncodeToString([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload))
 }
 
 func decodeCursor(cursor string) (time.Time, uuid.UUID, error) {
-	decoded, err := base64.StdEncoding.DecodeString(cursor)
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return time.Time{}, uuid.Nil, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 	}
