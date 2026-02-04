@@ -53,7 +53,7 @@ func main() {
 	defer pool.Close()
 
 	store := storage.New(pool)
-	h := handlers.New(store, logger)
+	h := handlers.New(store, logger, cfg.App.Env)
 
 	router := gin.New()
 	router.Use(httpmiddleware.RequestID())

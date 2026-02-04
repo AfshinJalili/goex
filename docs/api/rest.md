@@ -28,13 +28,44 @@ Request:
 
 ## API Keys
 ### GET `/api-keys`
+Response:
+```json
+{
+  "keys": [
+    {
+      "id": "uuid",
+      "prefix": "ab12cd34",
+      "scopes": ["read", "trade"],
+      "ip_whitelist": ["203.0.113.1"],
+      "last_used_at": "2026-02-04T12:00:00Z",
+      "revoked_at": null,
+      "created_at": "2026-02-04T12:00:00Z"
+    }
+  ]
+}
+```
 ### POST `/api-keys`
 Request:
 ```json
 { "label": "trading-bot", "scopes": ["trade", "read"], "ip_whitelist": ["1.2.3.4"] }
 ```
+Response:
+```json
+{
+  "id": "uuid",
+  "prefix": "ab12cd34",
+  "secret": "ck_dev_ab12cd34.<secret>",
+  "scopes": ["trade", "read"],
+  "ip_whitelist": ["1.2.3.4"],
+  "created_at": "2026-02-04T12:00:00Z"
+}
+```
 
 ### DELETE `/api-keys/{key_id}`
+Response:
+```json
+{ "status": "revoked" }
+```
 
 ## User & Account
 ### GET `/me`

@@ -30,6 +30,17 @@ type Balance struct {
 	UpdatedAt time.Time
 }
 
+type APIKey struct {
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	Prefix      string
+	Scopes      []string
+	IPWhitelist []string
+	LastUsedAt  *time.Time
+	RevokedAt   *time.Time
+	CreatedAt   time.Time
+}
+
 // AuditLog captures a read action.
 type AuditLog struct {
 	ActorID    uuid.UUID
