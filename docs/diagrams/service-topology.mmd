@@ -1,0 +1,51 @@
+flowchart TB
+  subgraph Edge
+    gw["API Gateway + WAF"]
+    ws["WebSocket Gateway"]
+  end
+
+  subgraph CoreServices
+    user["User Service"]
+    order["Order Ingest"]
+    match["Matching Engine"]
+    ledger["Ledger Service"]
+    fee["Fee Service"]
+    market["Market Data Service"]
+    wallet["Wallet Service Adapter"]
+    risk["Risk Service"]
+    compliance["Compliance Service"]
+    admin["Admin Service"]
+  end
+
+  subgraph DataPlane
+    pg["Postgres"]
+    redis["Redis"]
+    tsdb["TimescaleDB"]
+    kafka["Kafka"]
+  end
+
+  gw --> user
+  gw --> order
+  gw --> admin
+  ws --> market
+
+  order --> risk
+  order --> kafka
+  match --> kafka
+  ledger --> kafka
+  fee --> ledger
+  wallet --> kafka
+  compliance --> kafka
+
+  user --> pg
+  order --> pg
+  ledger --> pg
+  wallet --> pg
+
+  market --> redis
+  market --> tsdb
+
+  kafka <--> match
+  kafka <--> ledger
+  kafka <--> market
+  kafka <--> compliance

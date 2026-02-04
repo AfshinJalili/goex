@@ -1,0 +1,30 @@
+flowchart TB
+  subgraph Internet
+    client["Clients"]
+  end
+
+  subgraph Edge
+    waf["WAF + API Gateway"]
+  end
+
+  subgraph InternalNetwork
+    services["Microservices (mTLS)"]
+    kafka["Kafka"]
+    redis["Redis"]
+    pg["Postgres"]
+    tsdb["TimescaleDB"]
+  end
+
+  subgraph ExternalProviders
+    custody["Custody Provider"]
+    kyc["KYC/AML Provider"]
+  end
+
+  client --> waf
+  waf --> services
+  services --> kafka
+  services --> redis
+  services --> pg
+  services --> tsdb
+  services --> custody
+  services --> kyc

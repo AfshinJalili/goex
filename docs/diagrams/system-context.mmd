@@ -1,0 +1,26 @@
+flowchart LR
+  user["Retail/Institutional Clients"] --> gw["API Gateway"]
+  admin["Admin/Compliance Operators"] --> gw
+
+  gw --> userSvc["User Service"]
+  gw --> orderSvc["Order Ingest Service"]
+  gw --> marketWs["Market Data Gateway"]
+
+  orderSvc --> kafka["Kafka Event Bus"]
+  marketWs --> marketSvc["Market Data Service"]
+  userSvc --> pg["Postgres"]
+
+  kafka --> match["Matching Engine"]
+  kafka --> ledger["Ledger Service"]
+  kafka --> marketSvc
+  kafka --> compliance["Compliance Service"]
+
+  ledger --> pg
+  marketSvc --> redis["Redis Cache"]
+  marketSvc --> tsdb["TimescaleDB"]
+
+  wallet["Wallet Service Adapter"] --> custody["External Custody Provider"]
+  custody --> wallet
+  wallet --> pg
+  wallet --> kafka
+  compliance --> kyc["KYC/AML Providers"]

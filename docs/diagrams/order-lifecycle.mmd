@@ -1,0 +1,21 @@
+sequenceDiagram
+  participant C as Client
+  participant G as API Gateway
+  participant O as Order Ingest
+  participant K as Kafka
+  participant M as Matching Engine
+  participant L as Ledger
+  participant MD as Market Data
+
+  C->>G: POST /orders
+  G->>O: Auth + rate limit + validate
+  O->>O: Risk checks + balance pre-check
+  O->>K: Publish order.accepted
+  K-->>M: order.accepted
+  M->>M: Match in-memory order book
+  M->>K: Publish trade.executed
+  K-->>L: trade.executed
+  L->>L: Settle (double-entry)
+  L->>K: Publish ledger.entries + balances.updated
+  K-->>MD: balances.updated + trade.executed
+  MD-->>C: WebSocket updates

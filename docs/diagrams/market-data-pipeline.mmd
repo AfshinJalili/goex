@@ -1,0 +1,8 @@
+flowchart LR
+  match["Matching Engine"] --> k["Kafka"]
+  order["Order Ingest"] --> k
+  k --> md["Market Data Service"]
+  md --> redis["Redis Pub/Sub"]
+  md --> tsdb["TimescaleDB"]
+  redis --> ws["WebSocket Gateway"]
+  ws --> clients["Clients"]

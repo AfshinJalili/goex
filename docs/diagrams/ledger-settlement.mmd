@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant M as Matching Engine
+  participant K as Kafka
+  participant L as Ledger Service
+  participant P as Postgres
+
+  M->>K: trade.executed
+  K-->>L: trade.executed
+  L->>P: BEGIN TRANSACTION
+  L->>P: Debit buyer quote account
+  L->>P: Credit seller quote account
+  L->>P: Credit buyer base account
+  L->>P: Debit seller base account
+  L->>P: Record fee entries
+  L->>P: Insert immutable ledger entries
+  L->>P: COMMIT
+  L->>K: balances.updated
