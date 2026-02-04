@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	requestIDHeader = "X-Request-ID"
+	requestIDHeader   = "X-Request-ID"
+	traceParentHeader = "traceparent"
 )
 
 func RequestID() gin.HandlerFunc {
@@ -40,6 +41,7 @@ func Logger(logger *slog.Logger) gin.HandlerFunc {
 		}
 
 		reqID, _ := c.Get(requestIDHeader)
+		traceParent := c.GetHeader(traceParentHeader)
 
 		logger.Info("request",
 			slog.String("method", c.Request.Method),
@@ -49,9 +51,11 @@ func Logger(logger *slog.Logger) gin.HandlerFunc {
 			slog.String("client_ip", c.ClientIP()),
 			slog.String("user_agent", c.Request.UserAgent()),
 			slog.Any("request_id", reqID),
+			slog.String("traceparent", traceParent),
 		)
 
 		metrics.RequestCount.WithLabelValues(c.Request.Method, path, http.StatusText(status)).Inc()
+		metrics.RequestDuration.WithLabelValues(c.Request.Method, path, http.StatusText(status)).Observe(latency.Seconds())
 	}
 }
 

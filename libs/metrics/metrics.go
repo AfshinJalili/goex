@@ -15,10 +15,18 @@ var (
 		},
 		[]string{"method", "path", "status"},
 	)
+	RequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "Duration of HTTP requests in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "path", "status"},
+	)
 )
 
 func Register(registry *prometheus.Registry) {
-	registry.MustRegister(RequestCount)
+	registry.MustRegister(RequestCount, RequestDuration)
 }
 
 func Handler(registry *prometheus.Registry) http.Handler {

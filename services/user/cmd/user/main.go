@@ -13,6 +13,7 @@ import (
 	"github.com/AfshinJalili/goex/libs/httpmiddleware"
 	"github.com/AfshinJalili/goex/libs/logging"
 	"github.com/AfshinJalili/goex/libs/metrics"
+	"github.com/AfshinJalili/goex/libs/trace"
 	"github.com/AfshinJalili/goex/services/user/internal/config"
 	"github.com/AfshinJalili/goex/services/user/internal/handlers"
 	"github.com/AfshinJalili/goex/services/user/internal/storage"
@@ -31,6 +32,14 @@ func main() {
 	}
 
 	logger := logging.NewLogger(cfg.App.LogLevel, cfg.App.ServiceName, cfg.App.Env)
+	shutdownTracer, err := trace.InitTracer(cfg.App.ServiceName, cfg.App.Env)
+	if err != nil {
+		logger.Error("tracer init failed", "error", err)
+	} else {
+		defer func() {
+			_ = shutdownTracer(context.Background())
+		}()
+	}
 
 	if cfg.App.Env == "dev" {
 		gin.SetMode(gin.DebugMode)
@@ -59,6 +68,7 @@ func main() {
 	router.Use(httpmiddleware.RequestID())
 	router.Use(httpmiddleware.Logger(logger))
 	router.Use(httpmiddleware.Recovery(logger))
+	router.Use(trace.Middleware(cfg.App.ServiceName))
 
 	router.GET("/healthz", health.LivenessHandler)
 	router.GET("/readyz", health.ReadinessHandler(ready))

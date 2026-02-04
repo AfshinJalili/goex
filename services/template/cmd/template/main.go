@@ -15,6 +15,7 @@ import (
 	"github.com/AfshinJalili/goex/libs/httpmiddleware"
 	"github.com/AfshinJalili/goex/libs/logging"
 	"github.com/AfshinJalili/goex/libs/metrics"
+	"github.com/AfshinJalili/goex/libs/trace"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -29,6 +30,14 @@ func main() {
 	}
 
 	logger := logging.NewLogger(cfg.LogLevel, cfg.ServiceName, cfg.Env)
+	shutdownTracer, err := trace.InitTracer(cfg.ServiceName, cfg.Env)
+	if err != nil {
+		logger.Error("tracer init failed", "error", err)
+	} else {
+		defer func() {
+			_ = shutdownTracer(context.Background())
+		}()
+	}
 
 	if cfg.Env == "dev" {
 		gin.SetMode(gin.DebugMode)
@@ -47,6 +56,7 @@ func main() {
 	router.Use(httpmiddleware.RequestID())
 	router.Use(httpmiddleware.Logger(logger))
 	router.Use(httpmiddleware.Recovery(logger))
+	router.Use(trace.Middleware(cfg.ServiceName))
 
 	router.GET("/healthz", health.LivenessHandler)
 	router.GET("/readyz", health.ReadinessHandler(ready))
