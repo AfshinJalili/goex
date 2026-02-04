@@ -1,4 +1,4 @@
-.PHONY: lint test build run
+.PHONY: lint test test-unit test-integration test-db test-all test-coverage build run docs docs-validate seed dev-reset
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping lint"; exit 0; }
@@ -7,8 +7,39 @@ lint:
 test:
 	@go test ./...
 
+test-unit:
+	@go test ./... -short
+
+test-db:
+	@RUN_DB_INTEGRATION=1 go test ./services/auth/... ./services/user/...
+
+test-integration:
+	@RUN_INTEGRATION=1 go test ./services/integration/...
+
+test-all: test-unit test-db test-integration
+
+test-coverage:
+	@go test ./... -coverprofile=coverage.out
+	@go tool cover -html=coverage.out -o coverage.html
+
 build:
 	@go build ./...
 
 run:
 	@go run ./services/template/cmd/template
+
+# Documentation
+docs:
+	@./scripts/openapi-serve.sh
+
+docs-validate:
+	@./scripts/openapi-validate.sh
+
+# Seed
+seed:
+	@./scripts/seed.sh
+
+# Dev reset
+dev-reset:
+	@docker compose -f deploy/docker-compose.yml down -v
+	@./scripts/dev-up.sh

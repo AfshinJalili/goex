@@ -5,9 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
+
+	"log/slog"
 
 	"github.com/AfshinJalili/goex/services/auth/internal/rate"
 	"github.com/AfshinJalili/goex/services/auth/internal/security"
@@ -15,7 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"log/slog"
 )
 
 type Clock interface {
@@ -41,7 +44,7 @@ type AuthHandler struct {
 	JWTSecret   []byte
 	AccessTTL   time.Duration
 	RefreshTTL  time.Duration
-	RateLimiter *rate.Limiter
+	RateLimiter rate.Limiter
 	TokenGen    security.TokenGenerator
 	Clock       Clock
 	Issuer      string
@@ -68,7 +71,7 @@ type errorResponse struct {
 	Message string `json:"message"`
 }
 
-func NewAuthHandler(store Store, logger *slog.Logger, jwtSecret string, accessTTL, refreshTTL time.Duration, limiter *rate.Limiter, issuer string) *AuthHandler {
+func NewAuthHandler(store Store, logger *slog.Logger, jwtSecret string, accessTTL, refreshTTL time.Duration, limiter rate.Limiter, issuer string) *AuthHandler {
 	return &AuthHandler{
 		Store:       store,
 		Logger:      logger,
@@ -95,8 +98,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+	if req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, errorResponse{Code: "INVALID_REQUEST", Message: "invalid payload"})
+		return
+	}
+
 	ip := c.ClientIP()
-	if !h.RateLimiter.Allow(ip, h.Clock.Now()) {
+	allowed, retryAfter, err := h.RateLimiter.Allow(c.Request.Context(), ip, h.Clock.Now())
+	if err != nil {
+		h.Logger.Error("rate limiter error", "error", err)
+		c.JSON(http.StatusInternalServerError, errorResponse{Code: "INTERNAL_ERROR", Message: "internal error"})
+		return
+	}
+	if !allowed {
+		if retryAfter > 0 {
+			c.Header("Retry-After", formatRetryAfter(retryAfter))
+		}
 		c.JSON(http.StatusTooManyRequests, errorResponse{Code: "RATE_LIMITED", Message: "too many requests"})
 		return
 	}
@@ -237,4 +256,12 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 func computeHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func formatRetryAfter(d time.Duration) string {
+	secs := int(math.Ceil(d.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	return fmt.Sprintf("%d", secs)
 }

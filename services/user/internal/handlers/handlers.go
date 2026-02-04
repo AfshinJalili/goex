@@ -367,6 +367,9 @@ func parseLimit(raw string) int {
 	if err != nil {
 		return 0
 	}
+	if val <= 0 {
+		return 0
+	}
 	return val
 }
 

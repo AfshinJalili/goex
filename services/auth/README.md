@@ -29,6 +29,10 @@ Optional env vars:
 - `CEX_ARGON2_KEY_LENGTH` (default: `32`)
 - `CEX_LOGIN_RATE_LIMIT` (default: `10`)
 - `CEX_LOGIN_RATE_WINDOW` (default: `1m`)
+- `CEX_RATE_LIMIT_REDIS_ADDR` (optional; if set, Redis-backed limiter is used)
+- `CEX_RATE_LIMIT_REDIS_PASSWORD`
+- `CEX_RATE_LIMIT_REDIS_DB`
+- `CEX_RATE_LIMIT_REDIS_PREFIX` (default: `cex:auth:rl:`)
 
 ## Manual Test
 1. Start Postgres (see `deploy/docker-compose.yml`).

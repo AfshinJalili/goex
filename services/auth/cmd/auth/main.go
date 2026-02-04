@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/redis/go-redis/v9"
 	"log/slog"
 )
 
@@ -62,8 +63,16 @@ func main() {
 	}
 	defer pool.Close()
 
+	limiter, limiterClose, err := buildLimiter(cfg, logger)
+	if err != nil {
+		logger.Error("rate limiter init failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		_ = limiterClose()
+	}()
+
 	store := storage.New(pool)
-	limiter := rate.New(cfg.RateLimit.LoginLimit, cfg.RateLimit.Window)
 	authHandler := handlers.NewAuthHandler(store, logger, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, limiter, cfg.JWTIssuer)
 
 	router := gin.New()
@@ -121,6 +130,35 @@ func connectDB(cfg *config.Config) (*pgxpool.Pool, error) {
 	}
 
 	return pool, nil
+}
+
+func buildLimiter(cfg *config.Config, logger *slog.Logger) (rate.Limiter, func() error, error) {
+	if cfg.RateLimit.Redis.Addr != "" {
+		client := redis.NewClient(&redis.Options{
+			Addr:     cfg.RateLimit.Redis.Addr,
+			Password: cfg.RateLimit.Redis.Password,
+			DB:       cfg.RateLimit.Redis.DB,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := client.Ping(ctx).Err(); err != nil {
+			_ = client.Close()
+			if cfg.App.Env == "dev" || cfg.App.Env == "test" {
+				logger.Warn("redis rate limiter unavailable, falling back to memory", "error", err)
+				return rate.NewMemory(cfg.RateLimit.LoginLimit, cfg.RateLimit.Window), func() error { return nil }, nil
+			}
+			return nil, nil, err
+		}
+
+		return rate.NewRedisLimiter(client, cfg.RateLimit.LoginLimit, cfg.RateLimit.Window, cfg.RateLimit.Redis.Prefix), client.Close, nil
+	}
+
+	if cfg.App.Env == "dev" || cfg.App.Env == "test" {
+		return rate.NewMemory(cfg.RateLimit.LoginLimit, cfg.RateLimit.Window), func() error { return nil }, nil
+	}
+
+	return nil, nil, fmt.Errorf("rate limiter redis not configured")
 }
 
 func waitForShutdown(server *http.Server, logger *slog.Logger) {

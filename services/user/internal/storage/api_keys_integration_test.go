@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AfshinJalili/goex/services/testutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestAPIKeyLifecycleIntegration(t *testing.T) {
-	if os.Getenv("RUN_INTEGRATION") == "" {
-		t.Skip("set RUN_INTEGRATION=1 to run")
+	if os.Getenv("RUN_DB_INTEGRATION") == "" {
+		t.Skip("set RUN_DB_INTEGRATION=1 to run")
 	}
 
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
@@ -33,6 +34,7 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 		t.Skipf("db connection failed: %v", err)
 	}
 	defer pool.Close()
+	defer testutil.CleanupTestData(context.Background(), pool)
 
 	store := New(pool)
 
@@ -62,6 +64,7 @@ func TestAPIKeyLifecycleIntegration(t *testing.T) {
 	if !revoked {
 		t.Fatalf("expected revoke true")
 	}
+
 }
 
 func getEnv(key, def string) string {

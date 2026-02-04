@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,13 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+
 	"github.com/AfshinJalili/goex/services/auth/internal/rate"
 	"github.com/AfshinJalili/goex/services/auth/internal/security"
 	"github.com/AfshinJalili/goex/services/auth/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"log/slog"
 )
 
 type fakeClock struct {
@@ -30,13 +32,18 @@ func (f fakeClock) Now() time.Time { return f.now }
 type fakeTokenGen struct {
 	tokens []string
 	idx    int
+	mu     sync.Mutex
 }
 
 func (f *fakeTokenGen) New() (string, string, error) {
-	if f.idx >= len(f.tokens) {
-		return "", "", errors.New("no tokens")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var tok string
+	if f.idx < len(f.tokens) {
+		tok = f.tokens[f.idx]
+	} else {
+		tok = fmt.Sprintf("token-%d", f.idx)
 	}
-	tok := f.tokens[f.idx]
 	f.idx++
 	return tok, computeHash(tok), nil
 }
@@ -144,7 +151,7 @@ func (m *memStore) RevokeAllTokens(ctx context.Context, userID uuid.UUID) error 
 func setupHandler(t *testing.T, store *memStore, tokens []string, now time.Time) *AuthHandler {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	limiter := rate.New(100, time.Minute)
+	limiter := rate.NewMemory(100, time.Minute)
 	h := NewAuthHandler(store, logger, "test-secret", 15*time.Minute, 30*24*time.Hour, limiter, "cex-auth")
 	h.TokenGen = &fakeTokenGen{tokens: tokens}
 	h.Clock = fakeClock{now: now}
@@ -325,5 +332,161 @@ func TestLoginRequiresMFAWhenEnabled(t *testing.T) {
 	resp := performRequest(router, http.MethodPost, "/auth/login", loginRequest{Email: user.Email, Password: "s3cret"})
 	if resp.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for missing mfa, got %d", resp.Code)
+	}
+}
+
+func TestLoginEdgeCases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		email    string
+		password string
+		wantCode int
+		wantErr  string
+	}{
+		{
+			name:     "empty email",
+			email:    "",
+			password: "s3cret",
+			wantCode: http.StatusBadRequest,
+			wantErr:  "INVALID_REQUEST",
+		},
+		{
+			name:     "empty password",
+			email:    "user@example.com",
+			password: "",
+			wantCode: http.StatusBadRequest,
+			wantErr:  "INVALID_REQUEST",
+		},
+		{
+			name:     "email with whitespace",
+			email:    "  user@example.com  ",
+			password: "s3cret",
+			wantCode: http.StatusOK,
+			wantErr:  "",
+		},
+		{
+			name:     "very long email",
+			email:    strings.Repeat("a", 250) + "@example.com",
+			password: "s3cret",
+			wantCode: http.StatusUnauthorized,
+			wantErr:  "UNAUTHORIZED",
+		},
+		{
+			name:     "special characters in password",
+			email:    "user@example.com",
+			password: "!@#$%^&*()",
+			wantCode: http.StatusUnauthorized,
+			wantErr:  "UNAUTHORIZED",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMemStore()
+			params := security.Argon2Params{Memory: 64 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
+			hash, _ := security.HashPassword("s3cret", params)
+			user := &storage.User{ID: uuid.New(), Email: "user@example.com", PasswordHash: hash}
+			store.users[strings.ToLower(user.Email)] = user
+
+			h := setupHandler(t, store, []string{"refresh-1"}, time.Now())
+			router := gin.New()
+			h.RegisterRoutes(router)
+
+			resp := performRequest(router, http.MethodPost, "/auth/login", loginRequest{Email: tt.email, Password: tt.password})
+			if resp.Code != tt.wantCode {
+				t.Fatalf("expected %d, got %d", tt.wantCode, resp.Code)
+			}
+
+			if tt.wantErr != "" {
+				var errResp errorResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err == nil {
+					if errResp.Code != tt.wantErr {
+						t.Fatalf("expected error code %q, got %q", tt.wantErr, errResp.Code)
+					}
+				}
+			} else {
+				var out authResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if out.AccessToken == "" || out.RefreshToken == "" {
+					t.Fatalf("expected tokens for success")
+				}
+			}
+		})
+	}
+}
+
+func TestLoginConcurrentAttempts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := newMemStore()
+	params := security.Argon2Params{Memory: 64 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
+	hash, _ := security.HashPassword("s3cret", params)
+	user := &storage.User{ID: uuid.New(), Email: "user@example.com", PasswordHash: hash}
+	store.users[strings.ToLower(user.Email)] = user
+
+	h := setupHandler(t, store, []string{"refresh-1"}, time.Now())
+	router := gin.New()
+	h.RegisterRoutes(router)
+
+	var wg sync.WaitGroup
+	concurrency := 10
+	wg.Add(concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			resp := performRequest(router, http.MethodPost, "/auth/login", loginRequest{Email: user.Email, Password: "s3cret"})
+			if resp.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", resp.Code)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestRateLimiterBehavior(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	store := newMemStore()
+	limiter := rate.NewMemory(5, time.Minute)
+	h := setupHandler(t, store, []string{"refresh-1"}, time.Now())
+	h.RateLimiter = limiter
+	router := gin.New()
+	h.RegisterRoutes(router)
+
+	now := time.Now()
+	ip := "127.0.0.1"
+	var allowed bool
+	var err error
+
+	for i := 0; i < 5; i++ {
+		allowed, _, err = limiter.Allow(context.Background(), ip, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !allowed {
+			t.Fatalf("expected allow at attempt %d", i+1)
+		}
+	}
+
+	allowed, _, err = limiter.Allow(context.Background(), ip, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected rate limit after 5 attempts")
+	}
+
+	allowed, _, err = limiter.Allow(context.Background(), ip, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allow after window reset")
 	}
 }

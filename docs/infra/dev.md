@@ -34,6 +34,37 @@ TimescaleDB:
 - password: `cex_ts`
 - database: `cex_timeseries`
 
+## Seed Data
+
+The dev stack automatically seeds demo data after migrations when `CEX_ENV=dev` or `CEX_ENV=test`.
+To seed manually:
+
+```bash
+CEX_ENV=dev ./scripts/seed.sh
+```
+
+**WARNING: This is dev/test-only data. Never use in production.**
+
+### Demo Users
+
+- **demo@example.com** / `demo123`
+- **trader@example.com** / `trader123`
+
+Both users have:
+- Status: `active`
+- KYC Level: `verified`
+- MFA: disabled
+- Spot accounts with sample balances
+- API keys with `trade` and `read` scopes
+
+Seeds are deterministic and idempotent.
+
+### Test Fixtures (Optional)
+Set `SEED_TESTDATA=1` to add extra test users (MFA/suspended):
+```bash
+CEX_ENV=dev SEED_TESTDATA=1 ./scripts/seed.sh
+```
+
 ## Kafka
 - Bootstrap servers: `localhost:9092`
 - Advertised listeners default to `PLAINTEXT://localhost:9092`

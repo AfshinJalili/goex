@@ -26,9 +26,17 @@ type DBConfig struct {
 	SSLMode  string
 }
 
+type RateLimitRedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
+	Prefix   string
+}
+
 type RateLimitConfig struct {
 	LoginLimit int
 	Window     time.Duration
+	Redis      RateLimitRedisConfig
 }
 
 type Config struct {
@@ -72,6 +80,12 @@ func Load() (*Config, error) {
 		RateLimit: RateLimitConfig{
 			LoginLimit: envInt("CEX_LOGIN_RATE_LIMIT", 10),
 			Window:     envDuration("CEX_LOGIN_RATE_WINDOW", 1*time.Minute),
+			Redis: RateLimitRedisConfig{
+				Addr:     envString("CEX_RATE_LIMIT_REDIS_ADDR", ""),
+				Password: envString("CEX_RATE_LIMIT_REDIS_PASSWORD", ""),
+				DB:       envInt("CEX_RATE_LIMIT_REDIS_DB", 0),
+				Prefix:   envString("CEX_RATE_LIMIT_REDIS_PREFIX", "cex:auth:rl:"),
+			},
 		},
 	}
 
