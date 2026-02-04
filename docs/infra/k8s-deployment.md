@@ -32,3 +32,6 @@
 ## CI/CD
 - Build, test, security scan, deploy to staging.
 - Canary rollout for critical services.
+
+## Local Development
+For local docker-compose setup, see `docs/infra/dev.md`.
