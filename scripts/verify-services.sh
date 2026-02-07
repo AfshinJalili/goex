@@ -44,6 +44,7 @@ check_compose_cmd "Redis" redis redis-cli ping
 check_compose_cmd "Kafka" kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 check_compose_cmd "Auth" auth curl -fsS http://localhost:8080/healthz
 check_compose_cmd "User" user curl -fsS http://localhost:8081/healthz
+check_compose_cmd "Fee" fee curl -fsS http://localhost:8080/healthz
 check_compose_cmd "Kong" kong kong health
 
 if [[ $FAILED -ne 0 ]]; then

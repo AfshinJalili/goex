@@ -15,6 +15,7 @@ graph TD
     Client[Client/Tests] -->|HTTP :8000| Kong[Kong Gateway]
     Kong -->|/auth/*| Auth[Auth Service :8080]
     Kong -->|/me, /accounts, etc| User[User Service :8081]
+    Fee[Fee Service :9090] -->|SQL| PG
 
     Auth -->|SQL| PG[(Postgres :5432)]
     Auth -->|Rate Limit| Redis[(Redis :6379)]
@@ -33,10 +34,12 @@ graph TD
 
     Services -.->|Contains| Auth
     Services -.->|Contains| User
+    Services -.->|Contains| Fee
 
     Verify[verify-services.sh] -->|Check| Infra
     Verify -->|Check| Services
     Verify -->|Check| Kong
+    Verify -->|Check| Fee
 
     Test[test-integration.sh] -->|E2E Tests| Kong
 ```
@@ -63,6 +66,8 @@ docker compose -f deploy/docker-compose.yml down -v
 - Kafka: `localhost:9092`
 - Auth service: `localhost:8080` (`/healthz`)
 - User service: `localhost:8081` (`/healthz`)
+- Fee service gRPC: `localhost:9090`
+- Fee service HTTP: `localhost:8082` (`/healthz`, `/metrics`)
 - Kong proxy: `localhost:8000`
 - Kong admin: `localhost:8001` (`/status`)
 
@@ -130,6 +135,9 @@ make dev-logs
 | `CEX_JWT_SECRET` | JWT signing secret for auth/user services | `dev-secret-change-in-production-min-32-chars` |
 | `CEX_ENV` | Environment name | `dev` |
 | `CEX_RATE_LIMIT_REDIS_ADDR` | Redis address for auth rate limit | `redis:6379` |
+| `CEX_GRPC_PORT` | Fee gRPC port | `9090` |
+| `CEX_HTTP_PORT` | Fee HTTP port | `8080` |
+| `CEX_CACHE_REFRESH_INTERVAL` | Fee tier cache refresh interval | `5m` |
 | `GATEWAY_URL` | Kong proxy URL for tests | `http://localhost:8000` |
 | `POSTGRES_USER` | Postgres user | `cex` |
 | `POSTGRES_PASSWORD` | Postgres password | `cex` |

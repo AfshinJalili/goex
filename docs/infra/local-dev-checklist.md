@@ -5,10 +5,22 @@
 3. Verify infrastructure: Check each service in `docker compose ps`
 4. Verify migrations: Check tables exist in Postgres
 5. Verify seed data: Query users table, check demo user exists
-6. Verify services: Check health endpoints
+6. Verify services: Check health endpoints (Auth/User/Fee HTTP, Fee gRPC)
 7. Verify gateway: Test Kong admin API
 8. Run integration tests: `make dev-test`
 9. Manual API testing: Example curl commands for login, get user, etc.
+
+## Fee Service Checks
+
+Fee HTTP health:
+```bash
+curl -s http://localhost:8082/healthz
+```
+
+Fee gRPC health:
+```bash
+grpc_health_probe -addr=localhost:9090
+```
 
 ## Manual API Examples
 

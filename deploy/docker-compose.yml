@@ -128,6 +128,35 @@ services:
       timeout: 3s
       retries: 10
 
+  fee:
+    build:
+      context: ..
+      dockerfile: services/fee/Dockerfile
+    container_name: cex-fee
+    environment:
+      CEX_ENV: ${CEX_ENV:-dev}
+      CEX_GRPC_PORT: 9090
+      CEX_HTTP_PORT: 8080
+      CEX_CONFIG: /app/config.yaml
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-cex_core}
+      POSTGRES_USER: ${POSTGRES_USER:-cex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cex}
+      POSTGRES_SSLMODE: disable
+    ports:
+      - "9090:9090"
+      - "8082:8080"
+    depends_on:
+      - postgres
+    volumes:
+      - ../services/fee/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:9090"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
   timescale_data:

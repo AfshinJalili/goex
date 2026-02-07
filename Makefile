@@ -60,3 +60,12 @@ dev-logs:
 	@docker compose -f deploy/docker-compose.yml logs -f
 
 dev-restart: dev-stop dev-start
+
+proto-fee:
+	@cd services/fee && ./generate.sh
+
+build-fee:
+	@go build ./services/fee/cmd/fee
+
+test-fee:
+	@go test ./services/fee/...

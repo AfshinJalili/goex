@@ -56,6 +56,22 @@ service Compliance {
 }
 ```
 
+## Fee Service
+```
+service FeeService {
+  rpc GetFeeTier(GetFeeTierRequest) returns (GetFeeTierResponse);
+  rpc CalculateFees(CalculateFeesRequest) returns (CalculateFeesResponse);
+}
+```
+
+**GetFeeTier**: Retrieve fee tier for an account based on trading volume.
+- Input: account_id, optional volume override
+- Output: tier details (name, maker_fee_bps, taker_fee_bps)
+
+**CalculateFees**: Calculate trading fees for an order.
+- Input: account_id, symbol, side, order_type, quantity, price
+- Output: fee_amount, fee_asset, tier_applied
+
 ## Common Types
 ```
 message Money { string asset = 1; string amount = 2; }

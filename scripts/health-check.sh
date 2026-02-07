@@ -74,6 +74,9 @@ while :; do
   check_cmd user curl -fsS http://localhost:8081/healthz
   status_line "User" $?
 
+  check_cmd fee curl -fsS http://localhost:8080/healthz
+  status_line "Fee" $?
+
   check_cmd kong kong health
   status_line "Kong" $?
 

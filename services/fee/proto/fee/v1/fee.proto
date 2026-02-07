@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package fee.v1;
+
+option go_package = "github.com/AfshinJalili/goex/services/fee/proto/fee/v1;feepb";
+
+service FeeService {
+  rpc GetFeeTier(GetFeeTierRequest) returns (GetFeeTierResponse);
+  rpc CalculateFees(CalculateFeesRequest) returns (CalculateFeesResponse);
+}
+
+message GetFeeTierRequest {
+  string account_id = 1;
+  string volume = 2;
+}
+
+message GetFeeTierResponse {
+  string tier_id = 1;
+  string tier_name = 2;
+  int32 maker_fee_bps = 3;
+  int32 taker_fee_bps = 4;
+}
+
+message CalculateFeesRequest {
+  string account_id = 1;
+  string symbol = 2;
+  string side = 3;
+  string order_type = 4;
+  string quantity = 5;
+  string price = 6;
+}
+
+message CalculateFeesResponse {
+  string fee_amount = 1;
+  string fee_asset = 2;
+  string tier_applied = 3;
+}
