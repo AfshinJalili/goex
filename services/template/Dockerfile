@@ -13,7 +13,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/template ./services/template/cmd/template
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:latest
 RUN adduser -D -H -u 10001 appuser
 USER appuser
 WORKDIR /app

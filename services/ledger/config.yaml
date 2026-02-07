@@ -1,0 +1,15 @@
+service_name: "ledger-service"
+env: "dev"
+log_level: "info"
+metrics_path: "/metrics"
+grpc:
+  host: "0.0.0.0"
+  port: 9091
+kafka:
+  brokers:
+    - "kafka:9092"
+  consumer_group: "ledger-service"
+  topics:
+    trades_executed: "trades.executed"
+fee_service:
+  grpc_addr: "fee:9090"

@@ -11,7 +11,7 @@ test-unit:
 	@go test ./... -short
 
 test-db:
-	@RUN_DB_INTEGRATION=1 go test ./services/auth/... ./services/user/...
+	@RUN_DB_INTEGRATION=1 go test ./services/auth/... ./services/user/... ./services/ledger/...
 
 test-integration:
 	@RUN_INTEGRATION=1 go test ./services/integration/...
@@ -64,8 +64,20 @@ dev-restart: dev-stop dev-start
 proto-fee:
 	@cd services/fee && ./generate.sh
 
+proto-ledger:
+	@cd services/ledger && ./generate.sh
+
 build-fee:
 	@go build ./services/fee/cmd/fee
 
+build-ledger:
+	@go build ./services/ledger/cmd/ledger
+
 test-fee:
 	@go test ./services/fee/...
+
+test-ledger:
+	@go test ./services/ledger/...
+
+run-ledger:
+	@go run ./services/ledger/cmd/ledger

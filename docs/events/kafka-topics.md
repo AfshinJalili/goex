@@ -36,6 +36,50 @@ Schema (example):
 - `ledger.entries`
 - `balances.updated`
 
+Schema (ledger.entries example):
+```json
+{
+  "event_id": "evt_456",
+  "event_type": "ledger.entries",
+  "event_version": 1,
+  "timestamp": "2026-02-07T12:00:00Z",
+  "correlation_id": "evt_trade_1",
+  "trade_id": "trade_123",
+  "account_id": "acct_1",
+  "entries": [
+    {
+      "entry_id": "entry_1",
+      "asset": "USD",
+      "entry_type": "debit",
+      "amount": "100.00",
+      "reference_id": "trade_123",
+      "created_at": "2026-02-07T12:00:00Z"
+    }
+  ]
+}
+```
+
+Schema (balances.updated example):
+```json
+{
+  "event_id": "evt_457",
+  "event_type": "balances.updated",
+  "event_version": 1,
+  "timestamp": "2026-02-07T12:00:00Z",
+  "correlation_id": "evt_trade_1",
+  "trade_id": "trade_123",
+  "account_id": "acct_1",
+  "balances": [
+    {
+      "asset": "USD",
+      "available": "900.00",
+      "locked": "0",
+      "updated_at": "2026-02-07T12:00:00Z"
+    }
+  ]
+}
+```
+
 ### Wallet
 - `wallet.deposit.detected`
 - `wallet.withdrawal.requested`

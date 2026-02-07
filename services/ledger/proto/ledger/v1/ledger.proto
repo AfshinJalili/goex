@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+option go_package = "github.com/AfshinJalili/goex/services/ledger/proto/ledger/v1;ledgerpb";
+
+service Ledger {
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc ApplySettlement(ApplySettlementRequest) returns (ApplySettlementResponse);
+}
+
+message GetBalanceRequest {
+  string account_id = 1;
+  string asset = 2;
+}
+
+message GetBalanceResponse {
+  string account_id = 1;
+  string asset = 2;
+  string available = 3;
+  string locked = 4;
+  string updated_at = 5;
+}
+
+message ApplySettlementRequest {
+  string trade_id = 1;
+  string maker_account_id = 2;
+  string taker_account_id = 3;
+  string symbol = 4;
+  string price = 5;
+  string quantity = 6;
+  string maker_side = 7;
+}
+
+message ApplySettlementResponse {
+  bool success = 1;
+  repeated string ledger_entry_ids = 2;
+}

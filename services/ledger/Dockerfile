@@ -10,7 +10,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/fee ./services/fee/cmd/fee
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/ledger ./services/ledger/cmd/ledger
 
 # Runtime stage
 FROM alpine:latest
@@ -22,6 +22,6 @@ RUN chmod +x /usr/local/bin/grpc_health_probe
 RUN adduser -D -H -u 10001 appuser
 USER appuser
 WORKDIR /app
-COPY --from=build /out/fee /app/fee
-EXPOSE 8080 9090
-ENTRYPOINT ["/app/fee"]
+COPY --from=build /out/ledger /app/ledger
+EXPOSE 8080 9091
+ENTRYPOINT ["/app/ledger"]
