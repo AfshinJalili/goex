@@ -1,0 +1,11 @@
+service_name: "risk-service"
+env: "dev"
+log_level: "info"
+metrics_path: "/metrics"
+grpc:
+  host: "0.0.0.0"
+  port: 9092
+cache:
+  refresh_interval: "5m"
+ledger_service:
+  grpc_addr: "ledger:9091"

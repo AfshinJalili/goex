@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package order.v1;
+
+option go_package = "github.com/AfshinJalili/goex/services/order-ingest/proto/order/v1;orderpb";
+
+service OrderIngest {
+  rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (Order);
+}
+
+message SubmitOrderRequest {
+  string account_id = 1;
+  string client_order_id = 2;
+  string symbol = 3;
+  string side = 4;
+  string type = 5;
+  string price = 6;
+  string quantity = 7;
+  string time_in_force = 8;
+}
+
+message SubmitOrderResponse {
+  string order_id = 1;
+  string status = 2;
+  string created_at = 3;
+}
+
+message CancelOrderRequest {
+  string account_id = 1;
+  string order_id = 2;
+}
+
+message CancelOrderResponse {
+  string order_id = 1;
+  string status = 2;
+  string updated_at = 3;
+}
+
+message GetOrderRequest {
+  string account_id = 1;
+  string order_id = 2;
+}
+
+message Order {
+  string order_id = 1;
+  string client_order_id = 2;
+  string account_id = 3;
+  string symbol = 4;
+  string side = 5;
+  string type = 6;
+  string price = 7;
+  string quantity = 8;
+  string filled_quantity = 9;
+  string status = 10;
+  string time_in_force = 11;
+  string created_at = 12;
+  string updated_at = 13;
+}

@@ -456,6 +456,14 @@ func TestListAPIKeysIntegration(t *testing.T) {
 	token, _ := testutil.GenerateJWT(testutil.DemoUserID, []byte("test-secret"), 15*time.Minute, time.Now())
 
 	t.Run("success", func(t *testing.T) {
+		createResp := testutil.MakeAuthRequest(router, http.MethodPost, "/api-keys", createAPIKeyRequest{
+			Label:  "integration-seed",
+			Scopes: []string{"read"},
+		}, token)
+		if createResp.Code != http.StatusOK {
+			t.Fatalf("expected 200 creating key, got %d: %s", createResp.Code, createResp.Body.String())
+		}
+
 		resp := testutil.MakeAuthRequest(router, http.MethodGet, "/api-keys", nil, token)
 
 		if resp.Code != http.StatusOK {

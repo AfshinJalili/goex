@@ -77,6 +77,15 @@ while :; do
   check_cmd fee curl -fsS http://localhost:8080/healthz
   status_line "Fee" $?
 
+  check_cmd ledger curl -fsS http://localhost:8080/healthz
+  status_line "Ledger" $?
+
+  check_cmd risk curl -fsS http://localhost:8080/healthz
+  status_line "Risk" $?
+
+  check_cmd order-ingest curl -fsS http://localhost:8083/healthz
+  status_line "OrderIngest" $?
+
   check_cmd kong kong health
   status_line "Kong" $?
 

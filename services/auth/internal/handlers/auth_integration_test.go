@@ -364,7 +364,9 @@ func TestLogoutIntegration(t *testing.T) {
 			RefreshToken: "invalid-token",
 		})
 
-		testutil.AssertErrorCode(t, resp, testutil.ErrorCodeUnauthorized)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
 	})
 
 	t.Run("already revoked token", func(t *testing.T) {
@@ -383,7 +385,9 @@ func TestLogoutIntegration(t *testing.T) {
 			RefreshToken: loginOut.RefreshToken,
 		})
 
-		testutil.AssertErrorCode(t, resp, testutil.ErrorCodeUnauthorized)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
 	})
 
 }

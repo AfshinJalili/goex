@@ -18,15 +18,22 @@ Schema (example):
   "event_type": "orders.accepted",
   "event_version": 1,
   "timestamp": "2026-02-04T12:00:00Z",
+  "correlation_id": "req_abc",
   "order_id": "ord_123",
+  "client_order_id": "client_123",
   "account_id": "acct_1",
   "symbol": "BTC-USD",
   "side": "buy",
   "type": "limit",
   "price": "45000",
-  "quantity": "0.10"
+  "quantity": "0.10",
+  "time_in_force": "GTC",
+  "status": "pending",
+  "created_at": "2026-02-04T12:00:00Z"
 }
 ```
+
+For `orders.rejected`, expect `reasons` and `rejected_at`. For `orders.cancelled`, expect `cancelled_at`.
 
 ### Trades
 - `trades.executed`

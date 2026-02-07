@@ -583,7 +583,7 @@ func buildSettlementEntries(makerAccountID, takerAccountID, feeAccountID uuid.UU
 		)
 	}
 
-	return entries
+	return aggregateEntries(entries)
 }
 
 func applyEntry(acct *LedgerAccount, entryType string, amount decimal.Decimal) error {
@@ -617,6 +617,56 @@ func applyEntry(acct *LedgerAccount, entryType string, amount decimal.Decimal) e
 		return fmt.Errorf("insufficient balance for account %s asset %s", acct.AccountID, acct.Asset)
 	}
 	return nil
+}
+
+type aggregatedEntry struct {
+	AccountID uuid.UUID
+	Asset     string
+	Net       decimal.Decimal
+}
+
+func aggregateEntries(entries []pendingEntry) []pendingEntry {
+	index := make(map[string]int, len(entries))
+	ordered := make([]aggregatedEntry, 0, len(entries))
+
+	for _, entry := range entries {
+		key := ledgerKey(entry.AccountID, entry.Asset)
+		delta := entry.Amount
+		if entry.EntryType == "debit" {
+			delta = delta.Neg()
+		}
+		if idx, ok := index[key]; ok {
+			ordered[idx].Net = ordered[idx].Net.Add(delta)
+			continue
+		}
+		index[key] = len(ordered)
+		ordered = append(ordered, aggregatedEntry{
+			AccountID: entry.AccountID,
+			Asset:     entry.Asset,
+			Net:       delta,
+		})
+	}
+
+	result := make([]pendingEntry, 0, len(ordered))
+	for _, agg := range ordered {
+		if agg.Net.Equal(decimal.Zero) {
+			continue
+		}
+		entryType := "credit"
+		amount := agg.Net
+		if agg.Net.IsNegative() {
+			entryType = "debit"
+			amount = agg.Net.Abs()
+		}
+		result = append(result, pendingEntry{
+			AccountID: agg.AccountID,
+			Asset:     agg.Asset,
+			EntryType: entryType,
+			Amount:    amount,
+		})
+	}
+
+	return result
 }
 
 func splitSymbol(symbol string) (string, string, error) {

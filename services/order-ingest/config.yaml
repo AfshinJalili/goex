@@ -1,0 +1,21 @@
+service_name: "order-ingest-service"
+env: "dev"
+log_level: "info"
+metrics_path: "/metrics"
+http:
+  host: "0.0.0.0"
+  port: 8083
+kafka:
+  brokers:
+    - "kafka:9092"
+  consumer_group: "order-ingest-service"
+  topics:
+    orders_accepted: "orders.accepted"
+    orders_rejected: "orders.rejected"
+    orders_cancelled: "orders.cancelled"
+    trades_executed: "trades.executed"
+risk_service:
+  grpc_addr: "risk:9092"
+ledger_service:
+  grpc_addr: "ledger:9091"
+jwt_secret: "dev-secret-change-in-production-min-32-chars"

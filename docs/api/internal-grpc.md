@@ -48,6 +48,51 @@ service Risk {
 }
 ```
 
+**PreTradeCheck**: Validate an order before submission.
+- Input:
+  - `account_id` (UUID)
+  - `symbol` (e.g. `BTC-USD`)
+  - `side` (`buy` or `sell`)
+  - `order_type` (`limit` or `market`)
+  - `quantity` (positive decimal)
+  - `price` (positive decimal)
+- Output:
+  - `allowed` (bool)
+  - `reasons` (empty when allowed)
+  - `details` (optional metadata)
+
+**Denial reasons**:
+- `account_inactive`
+- `kyc_insufficient`
+- `market_not_found`
+- `market_inactive`
+- `insufficient_balance`
+
+**Errors**:
+- `InvalidArgument` for missing/invalid inputs
+- `NotFound` for missing accounts
+- `Internal` for storage or ledger lookup failures
+
+**Example**
+```
+PreTradeCheckRequest{
+  account_id: "00000000-0000-0000-0000-000000000101",
+  symbol: "BTC-USD",
+  side: "buy",
+  order_type: "limit",
+  quantity: "1.5",
+  price: "25000"
+}
+```
+
+```
+PreTradeCheckResponse{
+  allowed: false,
+  reasons: ["insufficient_balance"],
+  details: {"required_asset":"USD","required_amount":"37500","available":"1200"}
+}
+```
+
 ## Compliance Service
 ```
 service Compliance {

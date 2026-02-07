@@ -116,6 +116,7 @@ Response:
 
 ## Orders
 ### POST `/orders`
+Idempotency: supply `Idempotency-Key` header to dedupe order creation. Header value takes precedence over `client_order_id` in the body.
 Request:
 ```json
 {

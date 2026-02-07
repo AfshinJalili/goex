@@ -1,4 +1,4 @@
-.PHONY: lint test test-unit test-integration test-db test-all test-coverage build run docs docs-validate seed dev-reset dev-start dev-stop dev-verify dev-test dev-logs dev-restart
+.PHONY: lint test test-unit test-integration test-db test-all test-coverage build run docs docs-validate seed dev-reset dev-start dev-stop dev-verify dev-test dev-logs dev-restart proto-fee proto-ledger proto-order-ingest build-fee build-ledger build-order-ingest test-fee test-ledger test-order-ingest run-ledger run-order-ingest
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping lint"; exit 0; }
@@ -11,7 +11,7 @@ test-unit:
 	@go test ./... -short
 
 test-db:
-	@RUN_DB_INTEGRATION=1 go test ./services/auth/... ./services/user/... ./services/ledger/...
+	@RUN_DB_INTEGRATION=1 go test ./services/auth/... ./services/user/... ./services/ledger/... ./services/order-ingest/...
 
 test-integration:
 	@RUN_INTEGRATION=1 go test ./services/integration/...
@@ -67,11 +67,17 @@ proto-fee:
 proto-ledger:
 	@cd services/ledger && ./generate.sh
 
+proto-order-ingest:
+	@cd services/order-ingest && ./generate.sh
+
 build-fee:
 	@go build ./services/fee/cmd/fee
 
 build-ledger:
 	@go build ./services/ledger/cmd/ledger
+
+build-order-ingest:
+	@go build ./services/order-ingest/cmd/order-ingest
 
 test-fee:
 	@go test ./services/fee/...
@@ -79,5 +85,11 @@ test-fee:
 test-ledger:
 	@go test ./services/ledger/...
 
+test-order-ingest:
+	@go test ./services/order-ingest/...
+
 run-ledger:
 	@go run ./services/ledger/cmd/ledger
+
+run-order-ingest:
+	@go run ./services/order-ingest/cmd/order-ingest

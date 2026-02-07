@@ -190,6 +190,71 @@ services:
       timeout: 3s
       retries: 10
 
+  risk:
+    build:
+      context: ..
+      dockerfile: services/risk/Dockerfile
+    container_name: cex-risk
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: cex_core
+      POSTGRES_USER: cex
+      POSTGRES_PASSWORD: cex
+      LEDGER_SERVICE_ADDR: ledger:9091
+      CEX_GRPC_PORT: 9092
+      CEX_HTTP_PORT: 8080
+      CEX_CONFIG: /app/config.yaml
+    ports:
+      - "9094:9092"
+      - "8084:8080"
+    depends_on:
+      - postgres
+      - ledger
+    volumes:
+      - ../services/risk/config.yaml:/app/config.yaml:ro
+
+  order-ingest:
+    build:
+      context: ..
+      dockerfile: services/order-ingest/Dockerfile
+    container_name: cex-order-ingest
+    environment:
+      CEX_ENV: ${CEX_ENV:-dev}
+      CEX_HTTP_PORT: 8083
+      CEX_GRPC_PORT: 9093
+      CEX_CONFIG: /app/config.yaml
+      CEX_JWT_SECRET: ${CEX_JWT_SECRET:-dev-secret-change-in-production-min-32-chars}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-cex_core}
+      POSTGRES_USER: ${POSTGRES_USER:-cex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cex}
+      POSTGRES_SSLMODE: disable
+      CEX_KAFKA_BROKERS: kafka:9092
+      CEX_KAFKA_CONSUMER_GROUP: order-ingest-service
+      CEX_KAFKA_ORDERS_ACCEPTED_TOPIC: orders.accepted
+      CEX_KAFKA_ORDERS_REJECTED_TOPIC: orders.rejected
+      CEX_KAFKA_ORDERS_CANCELLED_TOPIC: orders.cancelled
+      CEX_KAFKA_TRADES_TOPIC: trades.executed
+      CEX_RISK_SERVICE_GRPC_ADDR: risk:9092
+      CEX_LEDGER_SERVICE_GRPC_ADDR: ledger:9091
+    ports:
+      - "8085:8083"
+      - "9093:9093"
+    depends_on:
+      - postgres
+      - kafka
+      - risk
+      - ledger
+    volumes:
+      - ../services/order-ingest/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
   timescale_data:
