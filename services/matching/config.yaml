@@ -1,0 +1,23 @@
+service_name: "matching-engine"
+env: "dev"
+log_level: "info"
+metrics_path: "/metrics"
+http:
+  host: "0.0.0.0"
+  port: 8080
+grpc:
+  port: 9094
+kafka:
+  brokers: ["localhost:9092"]
+  consumer_group: "matching-engine"
+  topics:
+    orders_accepted: "orders.accepted"
+    orders_cancelled: "orders.cancelled"
+    trades_executed: "trades.executed"
+postgres:
+  host: "localhost"
+  port: 5432
+  database: "cex_core"
+  user: "cex"
+  password: "cex"
+  sslmode: "disable"

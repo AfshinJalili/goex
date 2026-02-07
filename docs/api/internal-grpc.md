@@ -23,7 +23,20 @@ service MatchingEngine {
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 ```
-Matching consumes Kafka topics; gRPC used for control plane and snapshots.
+Matching consumes Kafka topics; gRPC is for control plane and snapshots.
+
+**LoadSnapshot**: Rebuild in-memory order books from Postgres.
+- Input:
+  - `symbol` (optional, empty means all symbols)
+- Output:
+  - `orders_loaded`
+  - `symbols` (list of symbols loaded)
+
+**HealthCheck**: Service health and in-memory book stats.
+- Output:
+  - `status` (e.g. `healthy`)
+  - `active_symbols`
+  - `total_orders`
 
 ## Ledger Service
 ```

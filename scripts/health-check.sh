@@ -86,6 +86,9 @@ while :; do
   check_cmd order-ingest curl -fsS http://localhost:8083/healthz
   status_line "OrderIngest" $?
 
+  check_cmd matching curl -fsS http://localhost:8080/healthz
+  status_line "Matching" $?
+
   check_cmd kong kong health
   status_line "Kong" $?
 

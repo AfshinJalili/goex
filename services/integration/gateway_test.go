@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"testing"
@@ -77,12 +79,25 @@ func makeGatewayRequest(method, path string, body interface{}, headers map[strin
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if path == "/auth/login" {
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		if _, ok := headers["X-Forwarded-For"]; !ok {
+			headers["X-Forwarded-For"] = randomIP()
+		}
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	return client.Do(req)
+}
+
+func randomIP() string {
+	rand.Seed(time.Now().UnixNano())
+	return fmt.Sprintf("10.0.%d.%d", rand.Intn(255), rand.Intn(255))
 }
 
 func TestGatewayJWTAuth(t *testing.T) {

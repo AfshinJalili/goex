@@ -48,6 +48,7 @@ check_compose_cmd "Fee" fee curl -fsS http://localhost:8080/healthz
 check_compose_cmd "Ledger" ledger curl -fsS http://localhost:8080/healthz
 check_compose_cmd "Risk" risk curl -fsS http://localhost:8080/healthz
 check_compose_cmd "OrderIngest" order-ingest curl -fsS http://localhost:8083/healthz
+check_compose_cmd "Matching" matching curl -fsS http://localhost:8080/healthz
 check_compose_cmd "Kong" kong kong health
 
 if [[ $FAILED -ne 0 ]]; then

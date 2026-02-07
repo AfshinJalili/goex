@@ -42,7 +42,7 @@ Core services:
 - API Gateway: auth, routing, rate limits, request validation, DDoS protection.
 - User Service: users, auth sessions, KYC status, API keys, RBAC.
 - Order Ingest Service: validates orders, applies risk rules, publishes to Kafka.
-- Matching Engine: pure matching logic, price-time priority, emits fills.
+- Matching Engine: Kafka-driven, in-memory order books with price-time priority, emits fills (implemented with gRPC control plane for snapshots/health).
 - Ledger Service: double-entry ledger, balance snapshots, idempotent settlement.
 - Fee Service: computes maker/taker fees, fee tiers, discounts.
 - Market Data Service: order book depth, tickers, candles, WebSocket fan-out.

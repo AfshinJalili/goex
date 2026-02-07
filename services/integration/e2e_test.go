@@ -2,9 +2,11 @@ package integration
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -54,6 +56,8 @@ func TestE2EFlow(t *testing.T) {
 	if os.Getenv("RUN_INTEGRATION") == "" {
 		t.Skip("set RUN_INTEGRATION=1 to run")
 	}
+
+	waitForGatewayRoutes(t)
 
 	loginResp, err := makeGatewayRequest(http.MethodPost, "/auth/login", loginRequest{
 		Email:    "demo@example.com",
@@ -228,4 +232,23 @@ func TestE2EFlow(t *testing.T) {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
 	})
+}
+
+func waitForGatewayRoutes(t *testing.T) {
+	t.Helper()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := makeGatewayRequest(http.MethodGet, "/me", nil, nil)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	t.Fatal("gateway routes not ready within timeout")
 }

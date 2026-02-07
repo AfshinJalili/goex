@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package matching.v1;
+
+option go_package = "github.com/AfshinJalili/goex/services/matching/proto/matching/v1;matchingpb";
+
+service MatchingEngine {
+  rpc LoadSnapshot(LoadSnapshotRequest) returns (LoadSnapshotResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message LoadSnapshotRequest {
+  string symbol = 1; // e.g. "BTC-USD", empty for all symbols
+}
+
+message LoadSnapshotResponse {
+  int32 orders_loaded = 1;
+  repeated string symbols = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+  int32 active_symbols = 2;
+  int32 total_orders = 3;
+}

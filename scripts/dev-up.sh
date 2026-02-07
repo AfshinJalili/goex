@@ -58,7 +58,7 @@ else
 fi
 
 echo "Restarting application services..."
-docker compose "${compose_args[@]}" restart auth user fee ledger risk order-ingest
+docker compose "${compose_args[@]}" restart auth user fee ledger risk order-ingest matching
 
 echo "Waiting for Kong gateway to be ready..."
 until curl -fsS http://localhost:8001/status >/dev/null 2>&1; do
@@ -89,6 +89,7 @@ wait_for "fee" "http://localhost:8082/healthz"
 wait_for "ledger" "http://localhost:8083/healthz"
 wait_for "risk" "http://localhost:8084/healthz"
 wait_for "order-ingest" "http://localhost:8085/healthz"
+wait_for "matching" "http://localhost:8086/healthz"
 wait_for "kong" "http://localhost:8001/status"
 
 echo "Local dev stack is ready."
@@ -98,6 +99,7 @@ echo "Fee service: http://localhost:8082"
 echo "Ledger service: http://localhost:8083"
 echo "Risk service: http://localhost:8084"
 echo "Order ingest service: http://localhost:8085"
+echo "Matching engine: http://localhost:8086"
 echo "Gateway proxy: $GATEWAY_URL"
 echo "Gateway admin: http://localhost:8001"
 echo "JWT secret: $CEX_JWT_SECRET"

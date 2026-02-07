@@ -39,6 +39,25 @@ For `orders.rejected`, expect `reasons` and `rejected_at`. For `orders.cancelled
 - `trades.executed`
 - `trades.settled`
 
+Schema (trades.executed example):
+```json
+{
+  "event_id": "evt_trade_1",
+  "event_type": "trades.executed",
+  "event_version": 1,
+  "timestamp": "2026-02-07T12:00:00Z",
+  "correlation_id": "req_abc",
+  "trade_id": "trade_123",
+  "symbol": "BTC-USD",
+  "maker_order_id": "ord_maker",
+  "taker_order_id": "ord_taker",
+  "price": "45000",
+  "quantity": "0.10",
+  "maker_side": "sell",
+  "executed_at": "2026-02-07T12:00:00Z"
+}
+```
+
 ### Ledger
 - `ledger.entries`
 - `balances.updated`

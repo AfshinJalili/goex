@@ -38,4 +38,24 @@ fi
 export RUN_INTEGRATION=1
 export GATEWAY_URL=${GATEWAY_URL:-http://localhost:8000}
 
-go test -v ./services/integration/...
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
+PROJECT_NAME="$(basename "$COMPOSE_DIR")"
+NETWORK_NAME="${PROJECT_NAME}_default"
+
+docker run --rm \
+  --network "$NETWORK_NAME" \
+  -v "$REPO_ROOT":/workspace \
+  -w /workspace \
+  -e RUN_INTEGRATION=1 \
+  -e GATEWAY_URL=http://kong:8000 \
+  -e ORDER_INGEST_URL=http://order-ingest:8083 \
+  -e MATCHING_URL=http://matching:8080 \
+  -e KAFKA_BROKERS=kafka:9092 \
+  -e POSTGRES_HOST=postgres \
+  -e POSTGRES_PORT=5432 \
+  -e POSTGRES_DB="${POSTGRES_DB:-cex_core}" \
+  -e POSTGRES_USER="${POSTGRES_USER:-cex}" \
+  -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-cex}" \
+  -e POSTGRES_SSLMODE=disable \
+  golang:1.24-alpine sh -c "apk add --no-cache git ca-certificates >/dev/null && go test -v ./services/integration/..."
