@@ -9,9 +9,11 @@ set -euo pipefail
 
 DB_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=disable"
 
-if ! command -v migrate >/dev/null 2>&1; then
+MIGRATE_BIN="${MIGRATE_BIN:-$(command -v migrate || true)}"
+
+if [[ -z "$MIGRATE_BIN" ]]; then
   echo "migrate CLI not found. Install: https://github.com/golang-migrate/migrate" >&2
   exit 1
 fi
 
-migrate -path migrations -database "$DB_URL" up
+"$MIGRATE_BIN" -path migrations -database "$DB_URL" up

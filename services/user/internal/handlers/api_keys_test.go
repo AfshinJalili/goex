@@ -17,7 +17,7 @@ func TestValidateScopes(t *testing.T) {
 		{"valid scopes", []string{"read", "trade"}, false},
 		{"invalid scope", []string{"admin"}, true},
 		{"invalid scope", []string{"invalid"}, true},
-		{"empty scopes", []string{}, false},
+		{"empty scopes", []string{}, true},
 		{"read only", []string{"read"}, false},
 		{"trade only", []string{"trade"}, false},
 		{"withdraw only", []string{"withdraw"}, false},

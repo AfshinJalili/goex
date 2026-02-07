@@ -1,6 +1,28 @@
 _format_version: "3.0"
 _transform: true
 
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      headers:
+        - Authorization
+        - Content-Type
+        - X-API-Key
+      exposed_headers:
+        - Retry-After
+      credentials: false
+  - name: file-log
+    config:
+      path: /tmp/kong.log
+
 services:
   - name: auth-service
     url: http://auth:8080
@@ -8,39 +30,40 @@ services:
       - name: auth-login
         paths: ["/auth/login"]
         methods: ["POST"]
-        plugins:
-          - name: rate-limiting
-            config:
-              minute: 10
-              policy: local
+        strip_path: false
       - name: auth-refresh
         paths: ["/auth/refresh"]
         methods: ["POST"]
+        strip_path: false
       - name: auth-logout
         paths: ["/auth/logout"]
         methods: ["POST"]
+        strip_path: false
 
   - name: user-service
-    url: http://user:8080
+    url: http://user:8081
     routes:
       - name: user-me
         paths: ["/me"]
         methods: ["GET"]
+        strip_path: false
       - name: user-accounts
         paths: ["/accounts"]
         methods: ["GET"]
+        strip_path: false
       - name: user-balances
         paths: ["/balances"]
         methods: ["GET"]
+        strip_path: false
       - name: user-api-keys
         paths: ["/api-keys"]
         methods: ["GET", "POST", "DELETE"]
-    plugins:
-      - name: jwt
-        config:
-          key_claim_name: iss
-          claims_to_verify:
-            - exp
+        strip_path: false
+        plugins:
+          - name: key-auth
+            config:
+              key_names: ["X-API-Key"]
+              anonymous: cex-anon
 
   - name: trading-service
     url: http://trading:8080
@@ -48,6 +71,7 @@ services:
       - name: trading-orders
         paths: ["/orders"]
         methods: ["GET", "POST", "DELETE"]
+        strip_path: false
         plugins:
           - name: key-auth
             config:
@@ -57,4 +81,5 @@ consumers:
   - username: cex-auth
     jwt_secrets:
       - key: cex-auth
-        secret: ${JWT_SECRET}
+        secret: ${CEX_JWT_SECRET:-dev-secret-change-in-production-min-32-chars}
+  - username: cex-anon

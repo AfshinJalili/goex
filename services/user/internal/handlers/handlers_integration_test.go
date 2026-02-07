@@ -363,9 +363,7 @@ func TestCreateAPIKeyIntegration(t *testing.T) {
 			Scopes: []string{},
 		}, token)
 
-		if resp.Code != http.StatusOK {
-			t.Fatalf("expected 200 for empty scopes, got %d", resp.Code)
-		}
+		testutil.AssertErrorCode(t, resp, testutil.ErrorCodeInvalidRequest)
 	})
 
 	t.Run("valid IP whitelist", func(t *testing.T) {

@@ -351,6 +351,9 @@ func (h *Handler) RevokeAPIKey(c *gin.Context) {
 }
 
 func validateScopes(scopes []string) error {
+	if len(scopes) == 0 {
+		return errors.New("scopes required")
+	}
 	for _, scope := range scopes {
 		if _, ok := allowedScopes[scope]; !ok {
 			return errors.New("invalid scope")

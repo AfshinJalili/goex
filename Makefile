@@ -1,4 +1,4 @@
-.PHONY: lint test test-unit test-integration test-db test-all test-coverage build run docs docs-validate seed dev-reset
+.PHONY: lint test test-unit test-integration test-db test-all test-coverage build run docs docs-validate seed dev-reset dev-start dev-stop dev-verify dev-test dev-logs dev-restart
 
 lint:
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; skipping lint"; exit 0; }
@@ -43,3 +43,20 @@ seed:
 dev-reset:
 	@docker compose -f deploy/docker-compose.yml down -v
 	@./scripts/dev-up.sh
+
+dev-start:
+	@./scripts/dev-up.sh
+
+dev-stop:
+	@./scripts/dev-down.sh
+
+dev-verify:
+	@./scripts/verify-services.sh
+
+dev-test:
+	@./scripts/test-integration.sh
+
+dev-logs:
+	@docker compose -f deploy/docker-compose.yml logs -f
+
+dev-restart: dev-stop dev-start

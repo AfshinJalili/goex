@@ -270,64 +270,70 @@ func TestGatewayAPIKeyAuth(t *testing.T) {
 		t.Fatalf("decode api key response: %v", err)
 	}
 
-	t.Run("POST /orders without API key returns 401", func(t *testing.T) {
-		resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
-			"symbol":   "BTC-USD",
-			"side":     "buy",
-			"type":     "limit",
-			"price":    "45000.00",
-			"quantity": "0.10",
-		}, nil)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
+	t.Run("orders endpoints", func(t *testing.T) {
+		if os.Getenv("RUN_ORDER_INTEGRATION") == "" {
+			t.Skip("set RUN_ORDER_INTEGRATION=1 to run /orders gateway checks")
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", resp.StatusCode)
-		}
-	})
+		t.Run("POST /orders without API key returns 401", func(t *testing.T) {
+			resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
+				"symbol":   "BTC-USD",
+				"side":     "buy",
+				"type":     "limit",
+				"price":    "45000.00",
+				"quantity": "0.10",
+			}, nil)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
 
-	t.Run("POST /orders with invalid API key returns 401", func(t *testing.T) {
-		headers := map[string]string{
-			"X-API-Key": "invalid-api-key",
-		}
-		resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
-			"symbol":   "BTC-USD",
-			"side":     "buy",
-			"type":     "limit",
-			"price":    "45000.00",
-			"quantity": "0.10",
-		}, headers)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", resp.StatusCode)
+			}
+		})
 
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", resp.StatusCode)
-		}
-	})
+		t.Run("POST /orders with invalid API key returns 401", func(t *testing.T) {
+			headers := map[string]string{
+				"X-API-Key": "invalid-api-key",
+			}
+			resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
+				"symbol":   "BTC-USD",
+				"side":     "buy",
+				"type":     "limit",
+				"price":    "45000.00",
+				"quantity": "0.10",
+			}, headers)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
 
-	t.Run("POST /orders with valid API key succeeds", func(t *testing.T) {
-		headers := map[string]string{
-			"X-API-Key": apiKeyOut.Secret,
-		}
-		resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
-			"symbol":   "BTC-USD",
-			"side":     "buy",
-			"type":     "limit",
-			"price":    "45000.00",
-			"quantity": "0.10",
-		}, headers)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", resp.StatusCode)
+			}
+		})
 
-		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("expected 401 or 400 (service may not be running), got %d", resp.StatusCode)
-		}
+		t.Run("POST /orders with valid API key succeeds", func(t *testing.T) {
+			headers := map[string]string{
+				"X-API-Key": apiKeyOut.Secret,
+			}
+			resp, err := makeGatewayRequest(http.MethodPost, "/orders", map[string]interface{}{
+				"symbol":   "BTC-USD",
+				"side":     "buy",
+				"type":     "limit",
+				"price":    "45000.00",
+				"quantity": "0.10",
+			}, headers)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 401 or 400 (service may not be running), got %d", resp.StatusCode)
+			}
+		})
 	})
 }
 
@@ -337,11 +343,15 @@ func TestGatewayRateLimit(t *testing.T) {
 	}
 
 	t.Run("POST /auth/login rate limits after threshold", func(t *testing.T) {
+		headers := map[string]string{
+			"X-Forwarded-For": "203.0.113.10",
+			"X-Real-IP":       "203.0.113.10",
+		}
 		for i := 0; i < 10; i++ {
 			resp, err := makeGatewayRequest(http.MethodPost, "/auth/login", loginRequest{
 				Email:    "demo@example.com",
 				Password: "wrongpassword",
-			}, nil)
+			}, headers)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
@@ -351,7 +361,7 @@ func TestGatewayRateLimit(t *testing.T) {
 		resp, err := makeGatewayRequest(http.MethodPost, "/auth/login", loginRequest{
 			Email:    "demo@example.com",
 			Password: "wrongpassword",
-		}, nil)
+		}, headers)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}

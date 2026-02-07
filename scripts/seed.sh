@@ -15,4 +15,4 @@ fi
 
 export POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD CEX_ENV
 
-go run cmd/seed/main.go
+go run ./cmd/seed
