@@ -2,7 +2,9 @@ package cache
 
 import (
 	"context"
+	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +17,16 @@ type TierStore interface {
 }
 
 type TierCache struct {
-	mu         sync.RWMutex
-	tiers      map[string]storage.FeeTier
-	thresholds []decimal.Decimal
+	mu          sync.RWMutex
+	tiers       map[string]storage.FeeTier
+	thresholds  []decimal.Decimal
 	lastRefresh time.Time
+}
+
+type RefreshMetrics interface {
+	ObserveRefresh(duration time.Duration)
+	SetCacheSize(size int)
+	IncRefreshError()
 }
 
 func NewTierCache() *TierCache {
@@ -62,6 +70,37 @@ func (c *TierCache) Refresh(ctx context.Context, store TierStore) error {
 	return c.Load(ctx, store)
 }
 
+func (c *TierCache) SetTierByVolume(volume string, tier storage.FeeTier) {
+	vol, err := decimal.NewFromString(strings.TrimSpace(volume))
+	if err != nil {
+		return
+	}
+	normalized := vol.String()
+	tier.MinVolume = normalized
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.tiers == nil {
+		c.tiers = make(map[string]storage.FeeTier)
+	}
+	c.tiers[normalized] = tier
+
+	exists := false
+	for _, existing := range c.thresholds {
+		if existing.Equal(vol) {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		c.thresholds = append(c.thresholds, vol)
+		sort.Slice(c.thresholds, func(i, j int) bool {
+			return c.thresholds[i].GreaterThan(c.thresholds[j])
+		})
+	}
+}
+
 func (c *TierCache) GetTierByVolume(volume string) (*storage.FeeTier, bool) {
 	vol, err := decimal.NewFromString(volume)
 	if err != nil {
@@ -102,4 +141,42 @@ func (c *TierCache) LastRefresh() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lastRefresh
+}
+
+func (c *TierCache) StartAutoRefresh(ctx context.Context, store TierStore, interval time.Duration, metrics RefreshMetrics, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if interval <= 0 {
+		logger.Warn("fee cache refresh disabled")
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				start := time.Now()
+				err := c.Refresh(refreshCtx, store)
+				cancel()
+				if err != nil {
+					logger.Error("fee cache refresh failed", "error", err)
+					if metrics != nil {
+						metrics.IncRefreshError()
+					}
+					continue
+				}
+				if metrics != nil {
+					metrics.ObserveRefresh(time.Since(start))
+					metrics.SetCacheSize(c.Size())
+				}
+				logger.Info("fee tier cache refreshed", "tiers", c.Size())
+			}
+		}
+	}()
 }

@@ -27,6 +27,7 @@ type GRPCConfig struct {
 
 type KafkaTopics struct {
 	TradesExecuted string
+	DeadLetter     string
 }
 
 type KafkaConfig struct {
@@ -72,11 +73,13 @@ func Load() (*Config, error) {
 	v.SetDefault("kafka.brokers", []string{"localhost:9092"})
 	v.SetDefault("kafka.consumer_group", "ledger-service")
 	v.SetDefault("kafka.topics.trades_executed", "trades.executed")
+	v.SetDefault("kafka.topics.dead_letter", "dead_letter")
 	v.SetDefault("fee_service.grpc_addr", "localhost:9090")
 
 	kafkaBrokers := envCSV("KAFKA_BROKERS", v.GetStringSlice("kafka.brokers"))
 	kafkaConsumer := envString("KAFKA_CONSUMER_GROUP", v.GetString("kafka.consumer_group"))
 	kafkaTradesTopic := envString("KAFKA_TRADES_TOPIC", v.GetString("kafka.topics.trades_executed"))
+	kafkaDLQTopic := envString("KAFKA_DLQ_TOPIC", v.GetString("kafka.topics.dead_letter"))
 	feeAddr := envString("FEE_SERVICE_ADDR", v.GetString("fee_service.grpc_addr"))
 
 	cfg := &Config{
@@ -98,6 +101,7 @@ func Load() (*Config, error) {
 			ConsumerGroup: kafkaConsumer,
 			Topics: KafkaTopics{
 				TradesExecuted: kafkaTradesTopic,
+				DeadLetter:     kafkaDLQTopic,
 			},
 		},
 		FeeService: FeeServiceConfig{

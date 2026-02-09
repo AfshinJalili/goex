@@ -14,6 +14,7 @@ kafka:
     orders_accepted: "orders.accepted"
     orders_cancelled: "orders.cancelled"
     trades_executed: "trades.executed"
+    dead_letter: "dead_letter"
 postgres:
   host: "localhost"
   port: 5432

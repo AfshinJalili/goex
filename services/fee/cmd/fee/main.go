@@ -79,7 +79,7 @@ func main() {
 
 	refreshCtx, refreshCancel := context.WithCancel(context.Background())
 	defer refreshCancel()
-	startCacheRefresh(refreshCtx, cacheStore, store, cfg.Cache.RefreshInterval, feeMetrics, logger)
+	cacheStore.StartAutoRefresh(refreshCtx, store, cfg.Cache.RefreshInterval, feeMetrics, logger)
 
 	grpcServer := grpc.NewServer()
 	feeService := service.NewFeeService(store, cacheStore, logger, feeMetrics)
@@ -172,43 +172,11 @@ func loadCache(cacheStore *cache.TierCache, store *storage.Store, feeMetrics *se
 		return err
 	}
 	if feeMetrics != nil {
-		feeMetrics.CacheRefreshDur.Observe(time.Since(start).Seconds())
-		feeMetrics.CacheSize.Set(float64(cacheStore.Size()))
+		feeMetrics.ObserveRefresh(time.Since(start))
+		feeMetrics.SetCacheSize(cacheStore.Size())
 	}
 	logger.Info("fee tier cache loaded", "tiers", cacheStore.Size())
 	return nil
-}
-
-func startCacheRefresh(ctx context.Context, cacheStore *cache.TierCache, store *storage.Store, interval time.Duration, feeMetrics *service.Metrics, logger *slog.Logger) {
-	if interval <= 0 {
-		logger.Warn("cache refresh disabled")
-		return
-	}
-
-	ticker := time.NewTicker(interval)
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				start := time.Now()
-				err := cacheStore.Refresh(refreshCtx, store)
-				cancel()
-				if err != nil {
-					logger.Error("cache refresh failed", "error", err)
-					continue
-				}
-				if feeMetrics != nil {
-					feeMetrics.CacheRefreshDur.Observe(time.Since(start).Seconds())
-					feeMetrics.CacheSize.Set(float64(cacheStore.Size()))
-				}
-				logger.Info("fee tier cache refreshed", "tiers", cacheStore.Size())
-			}
-		}
-	}()
 }
 
 func waitForShutdown(grpcServer *grpc.Server, healthServer *grpchealth.Server, httpServer *http.Server, ready *health.Manager, cancel context.CancelFunc, logger *slog.Logger) {

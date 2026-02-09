@@ -43,6 +43,50 @@ type Publisher interface {
 	Close() error
 }
 
+type DLQPublisher struct {
+	primary  Publisher
+	dlq      Publisher
+	dlqTopic string
+	logger   *slog.Logger
+}
+
+func NewDLQPublisher(primary Publisher, dlq Publisher, dlqTopic string, logger *slog.Logger) *DLQPublisher {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &DLQPublisher{
+		primary:  primary,
+		dlq:      dlq,
+		dlqTopic: dlqTopic,
+		logger:   logger,
+	}
+}
+
+func (p *DLQPublisher) PublishJSON(ctx context.Context, topic, key string, value any) (int32, int64, error) {
+	if p == nil || p.primary == nil {
+		return 0, 0, fmt.Errorf("kafka producer not configured")
+	}
+	partition, offset, err := p.primary.PublishJSON(ctx, topic, key, value)
+	if err == nil {
+		return partition, offset, nil
+	}
+	if p.dlq == nil || p.dlqTopic == "" {
+		return partition, offset, err
+	}
+	payload := BuildPublishDLQPayload(topic, key, value, err, "publish_failed", 1)
+	if _, _, dlqErr := p.dlq.PublishJSON(ctx, p.dlqTopic, key, payload); dlqErr != nil {
+		p.logger.Error("publish dlq failed", "topic", p.dlqTopic, "error", dlqErr)
+	}
+	return partition, offset, err
+}
+
+func (p *DLQPublisher) Close() error {
+	if p == nil || p.primary == nil {
+		return nil
+	}
+	return p.primary.Close()
+}
+
 type SyncProducer struct {
 	producer sarama.SyncProducer
 	logger   *slog.Logger

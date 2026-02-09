@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("not found")
-	ErrInvalidCursor  = errors.New("invalid cursor")
-	ErrInvalidStatus  = errors.New("invalid status transition")
-	ErrAlreadyHandled = errors.New("already processed")
+	ErrNotFound            = errors.New("not found")
+	ErrInvalidCursor       = errors.New("invalid cursor")
+	ErrInvalidStatus       = errors.New("invalid status transition")
+	ErrAlreadyHandled      = errors.New("already processed")
+	orderIngestEventPrefix = "order-ingest:"
 )
 
 type Store struct {
@@ -55,12 +56,22 @@ func (s *Store) CreateOrder(ctx context.Context, order Order) (*Order, bool, err
 		priceNull = false
 	}
 
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO orders (client_order_id, account_id, symbol, side, type, price, quantity, filled_quantity, status, time_in_force)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (client_order_id, account_id) DO NOTHING
-		RETURNING id, client_order_id, account_id, symbol, side, type, price::text, quantity::text, filled_quantity::text, status, time_in_force, created_at, updated_at
-	`, order.ClientOrderID, order.AccountID, order.Symbol, order.Side, order.Type, nullableString(price, priceNull), order.Quantity.String(), order.FilledQuantity.String(), order.Status, order.TimeInForce)
+	var row pgx.Row
+	if order.ID != uuid.Nil {
+		row = s.pool.QueryRow(ctx, `
+			INSERT INTO orders (id, client_order_id, account_id, symbol, side, type, price, quantity, filled_quantity, status, time_in_force)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (client_order_id, account_id) DO NOTHING
+			RETURNING id, client_order_id, account_id, symbol, side, type, price::text, quantity::text, filled_quantity::text, status, time_in_force, created_at, updated_at
+		`, order.ID, order.ClientOrderID, order.AccountID, order.Symbol, order.Side, order.Type, nullableString(price, priceNull), order.Quantity.String(), order.FilledQuantity.String(), order.Status, order.TimeInForce)
+	} else {
+		row = s.pool.QueryRow(ctx, `
+			INSERT INTO orders (client_order_id, account_id, symbol, side, type, price, quantity, filled_quantity, status, time_in_force)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (client_order_id, account_id) DO NOTHING
+			RETURNING id, client_order_id, account_id, symbol, side, type, price::text, quantity::text, filled_quantity::text, status, time_in_force, created_at, updated_at
+		`, order.ClientOrderID, order.AccountID, order.Symbol, order.Side, order.Type, nullableString(price, priceNull), order.Quantity.String(), order.FilledQuantity.String(), order.Status, order.TimeInForce)
+	}
 
 	stored, err := scanOrderRow(row)
 	if err == nil {
@@ -107,6 +118,35 @@ func (s *Store) GetOrderByClientID(ctx context.Context, accountID uuid.UUID, cli
 		return nil, err
 	}
 	return order, nil
+}
+
+func (s *Store) GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return decimal.Zero, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT price::text
+		FROM trades
+		WHERE symbol = $1
+		ORDER BY executed_at DESC
+		LIMIT 1
+	`, symbol)
+	var priceStr string
+	if err := row.Scan(&priceStr); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return decimal.Zero, ErrNotFound
+		}
+		return decimal.Zero, err
+	}
+	price, err := decimal.NewFromString(strings.TrimSpace(priceStr))
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("parse trade price: %w", err)
+	}
+	if price.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, ErrNotFound
+	}
+	return price, nil
 }
 
 func (s *Store) ListOrders(ctx context.Context, accountID uuid.UUID, filter OrderFilter) ([]Order, string, error) {
@@ -185,16 +225,28 @@ func (s *Store) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, status
 	row := s.pool.QueryRow(ctx, `
 		UPDATE orders
 		SET status = $1, filled_quantity = $2, updated_at = now()
-		WHERE id = $3
+		WHERE id = $3 AND status NOT IN ('cancelled','rejected','expired')
 		RETURNING id, client_order_id, account_id, symbol, side, type, price::text, quantity::text, filled_quantity::text, status, time_in_force, created_at, updated_at
 	`, status, filledQuantity.String(), orderID)
 
 	order, err := scanOrderRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
 		}
-		return nil, err
+		var existingStatus string
+		check := s.pool.QueryRow(ctx, `
+			SELECT status
+			FROM orders
+			WHERE id = $1
+		`, orderID)
+		if scanErr := check.Scan(&existingStatus); scanErr != nil {
+			if errors.Is(scanErr, pgx.ErrNoRows) {
+				return nil, ErrNotFound
+			}
+			return nil, scanErr
+		}
+		return nil, ErrInvalidStatus
 	}
 	return order, nil
 }
@@ -240,10 +292,15 @@ func (s *Store) InsertAudit(ctx context.Context, log AuditLog) error {
 	return err
 }
 
-func (s *Store) ApplyTradeExecution(ctx context.Context, eventID string, fills []OrderFill) (bool, error) {
+type ApplyTradeResult struct {
+	AlreadyProcessed bool
+	FilledOrderIDs   []uuid.UUID
+}
+
+func (s *Store) ApplyTradeExecution(ctx context.Context, eventID string, fills []OrderFill) (ApplyTradeResult, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return false, err
+		return ApplyTradeResult{}, err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
@@ -252,22 +309,23 @@ func (s *Store) ApplyTradeExecution(ctx context.Context, eventID string, fills [
 	if strings.TrimSpace(eventID) != "" {
 		processed, err := isEventProcessed(ctx, tx, eventID)
 		if err != nil {
-			return false, err
+			return ApplyTradeResult{}, err
 		}
 		if processed {
-			return true, nil
+			return ApplyTradeResult{AlreadyProcessed: true}, nil
 		}
 	}
 
 	now := time.Now().UTC()
+	filledOrders := make([]uuid.UUID, 0, len(fills))
 	for _, fill := range fills {
 		order, err := getOrderForUpdate(ctx, tx, fill.OrderID)
 		if err != nil {
-			return false, err
+			return ApplyTradeResult{}, err
 		}
 
 		if order.Status == OrderStatusCancelled || order.Status == OrderStatusRejected || order.Status == OrderStatusExpired {
-			return false, fmt.Errorf("order %s not updatable", order.ID.String())
+			return ApplyTradeResult{}, fmt.Errorf("order %s not updatable", order.ID.String())
 		}
 
 		newFilled := order.FilledQuantity.Add(fill.Quantity)
@@ -286,7 +344,10 @@ func (s *Store) ApplyTradeExecution(ctx context.Context, eventID string, fills [
 			WHERE id = $4
 		`, newFilled.String(), newStatus, now, order.ID)
 		if err != nil {
-			return false, err
+			return ApplyTradeResult{}, err
+		}
+		if newStatus == OrderStatusFilled && order.Status != OrderStatusFilled {
+			filledOrders = append(filledOrders, order.ID)
 		}
 	}
 
@@ -295,16 +356,16 @@ func (s *Store) ApplyTradeExecution(ctx context.Context, eventID string, fills [
 			INSERT INTO processed_events (event_id)
 			VALUES ($1)
 			ON CONFLICT (event_id) DO NOTHING
-		`, eventID); err != nil {
-			return false, err
+		`, orderIngestEventKey(eventID)); err != nil {
+			return ApplyTradeResult{}, err
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return false, err
+		return ApplyTradeResult{}, err
 	}
 
-	return false, nil
+	return ApplyTradeResult{FilledOrderIDs: filledOrders}, nil
 }
 
 type OrderFill struct {
@@ -313,12 +374,27 @@ type OrderFill struct {
 }
 
 func isEventProcessed(ctx context.Context, tx pgx.Tx, eventID string) (bool, error) {
+	eventID = orderIngestEventKey(eventID)
+	if eventID == "" {
+		return false, nil
+	}
 	var exists bool
 	row := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM processed_events WHERE event_id = $1)`, eventID)
 	if err := row.Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists, nil
+}
+
+func orderIngestEventKey(eventID string) string {
+	trimmed := strings.TrimSpace(eventID)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, orderIngestEventPrefix) {
+		return trimmed
+	}
+	return orderIngestEventPrefix + trimmed
 }
 
 func getOrderForUpdate(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (*Order, error) {

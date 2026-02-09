@@ -64,6 +64,50 @@ func TestCreateOrderIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateOrderWithID(t *testing.T) {
+	if os.Getenv("RUN_DB_INTEGRATION") == "" {
+		t.Skip("set RUN_DB_INTEGRATION=1 to run")
+	}
+
+	pool, err := testutil.SetupTestDB()
+	if err != nil {
+		t.Skipf("db connection failed: %v", err)
+	}
+	defer pool.Close()
+
+	ctx := context.Background()
+	userID, accountID := createTestAccount(t, ctx, pool, "orders-id")
+	defer cleanupTestAccount(ctx, pool, userID, accountID)
+
+	store := New(pool)
+	price := decimal.NewFromInt(100)
+	orderID := uuid.New()
+	order := Order{
+		ID:             orderID,
+		ClientOrderID:  "client-1-id",
+		AccountID:      accountID,
+		Symbol:         "BTC-USD",
+		Side:           "buy",
+		Type:           "limit",
+		Price:          &price,
+		Quantity:       decimal.NewFromInt(1),
+		FilledQuantity: decimal.Zero,
+		Status:         OrderStatusPending,
+		TimeInForce:    "GTC",
+	}
+
+	stored, created, err := store.CreateOrder(ctx, order)
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected created order")
+	}
+	if stored.ID != orderID {
+		t.Fatalf("expected order ID %s, got %s", orderID, stored.ID)
+	}
+}
+
 func TestApplyTradeExecutionIdempotent(t *testing.T) {
 	if os.Getenv("RUN_DB_INTEGRATION") == "" {
 		t.Skip("set RUN_DB_INTEGRATION=1 to run")
@@ -115,15 +159,18 @@ func TestApplyTradeExecutionIdempotent(t *testing.T) {
 	}
 
 	eventID := uuid.NewString()
-	already, err := store.ApplyTradeExecution(ctx, eventID, []OrderFill{
+	result, err := store.ApplyTradeExecution(ctx, eventID, []OrderFill{
 		{OrderID: order1.ID, Quantity: decimal.NewFromInt(2)},
 		{OrderID: order2.ID, Quantity: decimal.NewFromInt(2)},
 	})
 	if err != nil {
 		t.Fatalf("ApplyTradeExecution: %v", err)
 	}
-	if already {
+	if result.AlreadyProcessed {
 		t.Fatalf("expected first execution to not be already processed")
+	}
+	if len(result.FilledOrderIDs) != 2 {
+		t.Fatalf("expected filled order IDs, got %d", len(result.FilledOrderIDs))
 	}
 
 	order1Updated, err := store.GetOrderByID(ctx, order1.ID)
@@ -134,14 +181,14 @@ func TestApplyTradeExecutionIdempotent(t *testing.T) {
 		t.Fatalf("expected filled quantity 2, got %s", order1Updated.FilledQuantity.String())
 	}
 
-	already, err = store.ApplyTradeExecution(ctx, eventID, []OrderFill{
+	result, err = store.ApplyTradeExecution(ctx, eventID, []OrderFill{
 		{OrderID: order1.ID, Quantity: decimal.NewFromInt(2)},
 		{OrderID: order2.ID, Quantity: decimal.NewFromInt(2)},
 	})
 	if err != nil {
 		t.Fatalf("ApplyTradeExecution duplicate: %v", err)
 	}
-	if !already {
+	if !result.AlreadyProcessed {
 		t.Fatalf("expected already processed on duplicate")
 	}
 }
@@ -186,6 +233,50 @@ func TestCancelOrderInvalidStatus(t *testing.T) {
 	}
 }
 
+func TestCancelOrderRaceDoesNotOverwriteFill(t *testing.T) {
+	if os.Getenv("RUN_DB_INTEGRATION") == "" {
+		t.Skip("set RUN_DB_INTEGRATION=1 to run")
+	}
+
+	pool, err := testutil.SetupTestDB()
+	if err != nil {
+		t.Skipf("db connection failed: %v", err)
+	}
+	defer pool.Close()
+
+	ctx := context.Background()
+	userID, accountID := createTestAccount(t, ctx, pool, "cancel-race")
+	defer cleanupTestAccount(ctx, pool, userID, accountID)
+
+	store := New(pool)
+	price := decimal.NewFromInt(100)
+
+	order, _, err := store.CreateOrder(ctx, Order{
+		ClientOrderID:  "client-cancel-race",
+		AccountID:      accountID,
+		Symbol:         "BTC-USD",
+		Side:           "buy",
+		Type:           "limit",
+		Price:          &price,
+		Quantity:       decimal.NewFromInt(1),
+		FilledQuantity: decimal.Zero,
+		Status:         OrderStatusOpen,
+		TimeInForce:    "GTC",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder: %v", err)
+	}
+
+	if _, err := store.CancelOrder(ctx, order.ID, accountID); err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+
+	_, err = store.UpdateOrderStatus(ctx, order.ID, OrderStatusFilled, decimal.NewFromInt(1))
+	if err == nil || !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("expected ErrInvalidStatus after cancel, got %v", err)
+	}
+}
+
 func createTestAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, suffix string) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 
@@ -214,7 +305,7 @@ func createTestAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, su
 }
 
 func cleanupTestAccount(ctx context.Context, pool *pgxpool.Pool, userID, accountID uuid.UUID) {
-	_, _ = pool.Exec(ctx, `DELETE FROM processed_events WHERE event_id LIKE 'evt_%'`)
+	_, _ = pool.Exec(ctx, `DELETE FROM processed_events WHERE event_id LIKE 'order-ingest:evt_%'`)
 	_, _ = pool.Exec(ctx, `DELETE FROM orders WHERE account_id = $1`, accountID)
 	_, _ = pool.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, accountID)
 	_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)

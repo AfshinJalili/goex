@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,7 +82,7 @@ func main() {
 	defer feeConn.Close()
 
 	feeClient := feepb.NewFeeServiceClient(feeConn)
-	store := storage.New(pool, feeClient)
+	store := storage.New(pool, feeClient, logger, ledgerMetrics)
 
 	ledgerService := service.NewLedgerService(store, logger, ledgerMetrics)
 
@@ -94,21 +95,26 @@ func main() {
 
 	httpServer := buildHTTPServer(cfg, ready, registry, logger)
 
-	consumerGroup, err := kafka.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup, logger)
-	if err != nil {
-		logger.Error("kafka consumer init failed", "error", err)
-		os.Exit(1)
-	}
-	defer consumerGroup.Close()
-
 	producer, err := kafka.NewSyncProducer(cfg.Kafka.Brokers, logger, kafkaMetrics)
 	if err != nil {
 		logger.Error("kafka producer init failed", "error", err)
 		os.Exit(1)
 	}
 	defer producer.Close()
+	publisher := kafka.Publisher(producer)
+	if strings.TrimSpace(cfg.Kafka.Topics.DeadLetter) != "" {
+		publisher = kafka.NewDLQPublisher(producer, producer, cfg.Kafka.Topics.DeadLetter, logger)
+	}
 
-	tradeConsumer := consumer.NewTradeConsumer(store, ledgerService, producer, logger)
+	consumerGroup, err := kafka.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup, logger)
+	if err != nil {
+		logger.Error("kafka consumer init failed", "error", err)
+		os.Exit(1)
+	}
+	consumerGroup.WithDLQ(producer, cfg.Kafka.Topics.DeadLetter)
+	defer consumerGroup.Close()
+
+	tradeConsumer := consumer.NewTradeConsumer(store, ledgerService, publisher, logger)
 
 	ready.SetReady(true)
 

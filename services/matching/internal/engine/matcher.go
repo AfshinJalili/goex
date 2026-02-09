@@ -44,48 +44,88 @@ func (ob *OrderBook) MatchOrder(incoming *Order) ([]Trade, error) {
 		opposite = ob.buys
 	}
 
+	levels := make([]*priceLevel, 0, len(opposite.levels))
+	for _, level := range opposite.levels {
+		levels = append(levels, level)
+	}
+	sort.Slice(levels, func(i, j int) bool {
+		cmp := levels[i].price.Cmp(levels[j].price)
+		if side == SideBuy {
+			return cmp < 0
+		}
+		return cmp > 0
+	})
+
 	trades := make([]Trade, 0)
 	remaining := incoming.Remaining()
 
-	for remaining.GreaterThan(decimal.Zero) {
-		best := opposite.best()
-		if best == nil {
+	for _, level := range levels {
+		if remaining.LessThanOrEqual(decimal.Zero) {
 			break
 		}
-		if !priceCrosses(incoming, best.price) {
+		if !priceCrosses(incoming, level.price) {
 			break
 		}
-
-		makerElem := best.orders.Front()
-		if makerElem == nil {
+		hasSelf := false
+		hasOther := false
+		for e := level.orders.Front(); e != nil; e = e.Next() {
+			maker := e.Value.(*Order)
+			if maker.Remaining().LessThanOrEqual(decimal.Zero) {
+				continue
+			}
+			if maker.AccountID != "" && maker.AccountID == incoming.AccountID {
+				hasSelf = true
+				continue
+			}
+			hasOther = true
 			break
 		}
-		maker := makerElem.Value.(*Order)
-		makerRemaining := maker.Remaining()
-		if makerRemaining.LessThanOrEqual(decimal.Zero) {
-			ob.removeOrderLocked(maker.ID)
+		if hasSelf && !hasOther {
+			for e := level.orders.Front(); e != nil; {
+				next := e.Next()
+				maker := e.Value.(*Order)
+				if maker.AccountID != "" && maker.AccountID == incoming.AccountID {
+					ob.removeOrderLocked(maker.ID)
+				}
+				e = next
+			}
 			continue
 		}
+		for e := level.orders.Front(); e != nil && remaining.GreaterThan(decimal.Zero); {
+			next := e.Next()
+			maker := e.Value.(*Order)
+			makerRemaining := maker.Remaining()
+			if makerRemaining.LessThanOrEqual(decimal.Zero) {
+				ob.removeOrderLocked(maker.ID)
+				e = next
+				continue
+			}
+			if maker.AccountID != "" && maker.AccountID == incoming.AccountID {
+				e = next
+				continue
+			}
 
-		matchQty := minDecimal(remaining, makerRemaining)
-		maker.Filled = maker.Filled.Add(matchQty)
-		incoming.Filled = incoming.Filled.Add(matchQty)
-		remaining = incoming.Remaining()
+			matchQty := minDecimal(remaining, makerRemaining)
+			maker.Filled = maker.Filled.Add(matchQty)
+			incoming.Filled = incoming.Filled.Add(matchQty)
+			remaining = incoming.Remaining()
 
-		trade := Trade{
-			TradeID:      "",
-			Symbol:       incoming.Symbol,
-			MakerOrderID: maker.ID,
-			TakerOrderID: incoming.ID,
-			Price:        best.price,
-			Quantity:     matchQty,
-			MakerSide:    maker.Side,
-			ExecutedAt:   time.Now().UTC(),
-		}
-		trades = append(trades, trade)
+			trade := Trade{
+				TradeID:      "",
+				Symbol:       incoming.Symbol,
+				MakerOrderID: maker.ID,
+				TakerOrderID: incoming.ID,
+				Price:        level.price,
+				Quantity:     matchQty,
+				MakerSide:    maker.Side,
+				ExecutedAt:   time.Now().UTC(),
+			}
+			trades = append(trades, trade)
 
-		if maker.Remaining().LessThanOrEqual(decimal.Zero) {
-			ob.removeOrderLocked(maker.ID)
+			if maker.Remaining().LessThanOrEqual(decimal.Zero) {
+				ob.removeOrderLocked(maker.ID)
+			}
+			e = next
 		}
 	}
 
@@ -135,6 +175,9 @@ func (ob *OrderBook) canFill(incoming *Order) bool {
 		}
 		for e := level.orders.Front(); e != nil && remaining.GreaterThan(decimal.Zero); e = e.Next() {
 			maker := e.Value.(*Order)
+			if maker.AccountID != "" && maker.AccountID == incoming.AccountID {
+				continue
+			}
 			makerRemaining := maker.Remaining()
 			if makerRemaining.LessThanOrEqual(decimal.Zero) {
 				continue

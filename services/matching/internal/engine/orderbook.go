@@ -114,6 +114,9 @@ func (ob *OrderBook) addOrderLocked(order *Order) error {
 	if strings.TrimSpace(order.ID) == "" {
 		return fmt.Errorf("order id required")
 	}
+	if _, exists := ob.orders[order.ID]; exists {
+		return nil
+	}
 	if order.Type == TypeMarket {
 		return nil
 	}

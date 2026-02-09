@@ -8,11 +8,15 @@ import (
 	"time"
 
 	"github.com/AfshinJalili/goex/libs/kafka"
+	ledgerpb "github.com/AfshinJalili/goex/services/ledger/proto/ledger/v1"
 	"github.com/AfshinJalili/goex/services/order-ingest/internal/service"
 	"github.com/AfshinJalili/goex/services/order-ingest/internal/storage"
 	"github.com/IBM/sarama"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"log/slog"
 )
 
@@ -31,53 +35,58 @@ type TradeExecutedEvent struct {
 }
 
 type Store interface {
-	ApplyTradeExecution(ctx context.Context, eventID string, fills []storage.OrderFill) (bool, error)
+	ApplyTradeExecution(ctx context.Context, eventID string, fills []storage.OrderFill) (storage.ApplyTradeResult, error)
+}
+
+type LedgerClient interface {
+	ReleaseBalance(ctx context.Context, in *ledgerpb.ReleaseBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.ReleaseBalanceResponse, error)
 }
 
 type TradeConsumer struct {
 	store   Store
+	ledger  LedgerClient
 	logger  *slog.Logger
 	metrics *service.Metrics
 }
 
-func NewTradeConsumer(store Store, logger *slog.Logger, metrics *service.Metrics) *TradeConsumer {
+func NewTradeConsumer(store Store, ledger LedgerClient, logger *slog.Logger, metrics *service.Metrics) *TradeConsumer {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &TradeConsumer{store: store, logger: logger, metrics: metrics}
+	return &TradeConsumer{store: store, ledger: ledger, logger: logger, metrics: metrics}
 }
 
 func (c *TradeConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
 	if msg == nil || len(msg.Value) == 0 {
 		c.record("error")
-		return fmt.Errorf("empty kafka message")
+		return kafka.DLQ(fmt.Errorf("empty kafka message"), "empty_message")
 	}
 
 	var event TradeExecutedEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		c.record("error")
-		return fmt.Errorf("decode trades.executed: %w", err)
+		return kafka.DLQ(fmt.Errorf("decode trades.executed: %w", err), "decode")
 	}
 	if err := event.Validate(); err != nil {
 		c.record("error")
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 
 	makerOrderID, err := parseUUID(event.MakerOrderID, "maker_order_id")
 	if err != nil {
 		c.record("error")
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 	takerOrderID, err := parseUUID(event.TakerOrderID, "taker_order_id")
 	if err != nil {
 		c.record("error")
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 
 	qty, err := decimal.NewFromString(strings.TrimSpace(event.Quantity))
 	if err != nil {
 		c.record("error")
-		return fmt.Errorf("invalid quantity")
+		return kafka.DLQ(fmt.Errorf("invalid quantity"), "invalid_event")
 	}
 
 	fills := []storage.OrderFill{
@@ -85,13 +94,33 @@ func (c *TradeConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerM
 		{OrderID: takerOrderID, Quantity: qty},
 	}
 
-	already, err := c.store.ApplyTradeExecution(ctx, event.EventID, fills)
+	result, err := c.store.ApplyTradeExecution(ctx, event.EventID, fills)
 	if err != nil {
 		c.record("error")
 		return err
 	}
-	if already {
+	if result.AlreadyProcessed {
 		c.logger.Info("trade event already processed", "event_id", event.EventID, "trade_id", event.TradeID)
+	}
+
+	if len(result.FilledOrderIDs) > 0 {
+		if c.ledger == nil {
+			c.record("error")
+			return fmt.Errorf("ledger client not configured")
+		}
+		for _, orderID := range result.FilledOrderIDs {
+			releaseCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			_, err := c.ledger.ReleaseBalance(releaseCtx, &ledgerpb.ReleaseBalanceRequest{OrderId: orderID.String()})
+			cancel()
+			if err != nil {
+				if status.Code(err) == codes.NotFound {
+					c.logger.Warn("reservation not found on release", "order_id", orderID.String())
+					continue
+				}
+				c.record("error")
+				return err
+			}
+		}
 	}
 
 	c.record("success")

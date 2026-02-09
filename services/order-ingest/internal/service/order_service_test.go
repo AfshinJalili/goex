@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakeStore struct {
@@ -21,6 +22,9 @@ type fakeStore struct {
 	createOrder       *storage.Order
 	createCreated     bool
 	cancelOrder       *storage.Order
+	lastTradePrice    decimal.Decimal
+	lastTradeErr      error
+	createdOrder      *storage.Order
 }
 
 func (f *fakeStore) GetAccountIDForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
@@ -42,10 +46,11 @@ func (f *fakeStore) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*stora
 }
 
 func (f *fakeStore) CreateOrder(ctx context.Context, order storage.Order) (*storage.Order, bool, error) {
+	f.createdOrder = &order
 	if f.createOrder != nil {
 		return f.createOrder, f.createCreated, nil
 	}
-	return nil, false, errors.New("no order")
+	return &order, true, nil
 }
 
 func (f *fakeStore) ListOrders(ctx context.Context, accountID uuid.UUID, filter storage.OrderFilter) ([]storage.Order, string, error) {
@@ -61,6 +66,16 @@ func (f *fakeStore) CancelOrder(ctx context.Context, orderID, accountID uuid.UUI
 
 func (f *fakeStore) InsertAudit(ctx context.Context, log storage.AuditLog) error {
 	return nil
+}
+
+func (f *fakeStore) GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	if f.lastTradeErr != nil {
+		return decimal.Zero, f.lastTradeErr
+	}
+	if f.lastTradePrice.IsZero() {
+		return decimal.Zero, storage.ErrNotFound
+	}
+	return f.lastTradePrice, nil
 }
 
 type fakeRisk struct {
@@ -87,20 +102,43 @@ func (r *recordProducer) PublishJSON(ctx context.Context, topic, key string, val
 func (r *recordProducer) Close() error { return nil }
 
 type fakeLedger struct {
-	available string
-	err       error
+	reserveResp *ledgerpb.ReserveBalanceResponse
+	reserveErr  error
+	releaseErr  error
+	reserved    []*ledgerpb.ReserveBalanceRequest
+	released    []*ledgerpb.ReleaseBalanceRequest
 }
 
-func (f *fakeLedger) GetBalance(ctx context.Context, in *ledgerpb.GetBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.GetBalanceResponse, error) {
-	if f.err != nil {
-		return nil, f.err
+func (f *fakeLedger) ReserveBalance(ctx context.Context, in *ledgerpb.ReserveBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.ReserveBalanceResponse, error) {
+	f.reserved = append(f.reserved, in)
+	if f.reserveErr != nil {
+		return nil, f.reserveErr
 	}
-	return &ledgerpb.GetBalanceResponse{
-		AccountId: in.GetAccountId(),
-		Asset:     in.GetAsset(),
-		Available: f.available,
-		Locked:    "0",
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	if f.reserveResp != nil {
+		return f.reserveResp, nil
+	}
+	return &ledgerpb.ReserveBalanceResponse{
+		Success:       true,
+		ReservationId: uuid.NewString(),
+		AccountId:     in.GetAccountId(),
+		Asset:         in.GetAsset(),
+		Amount:        in.GetAmount(),
+		Available:     "0",
+		Locked:        in.GetAmount(),
+	}, nil
+}
+
+func (f *fakeLedger) ReleaseBalance(ctx context.Context, in *ledgerpb.ReleaseBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.ReleaseBalanceResponse, error) {
+	f.released = append(f.released, in)
+	if f.releaseErr != nil {
+		return nil, f.releaseErr
+	}
+	return &ledgerpb.ReleaseBalanceResponse{
+		Success:        true,
+		OrderId:        in.GetOrderId(),
+		AccountId:      uuid.NewString(),
+		Asset:          "USD",
+		ReleasedAmount: "0",
 	}, nil
 }
 
@@ -130,12 +168,13 @@ func TestSubmitOrderAccepted(t *testing.T) {
 
 	risk := &fakeRisk{resp: &riskpb.PreTradeCheckResponse{Allowed: true}}
 	producer := &recordProducer{}
+	ledger := &fakeLedger{}
 
-	svc := NewOrderService(store, risk, nil, producer, nil, nil, Topics{
+	svc := NewOrderService(store, risk, ledger, producer, nil, nil, Topics{
 		OrdersAccepted:  "orders.accepted",
 		OrdersRejected:  "orders.rejected",
 		OrdersCancelled: "orders.cancelled",
-	})
+	}, 50)
 
 	res, err := svc.SubmitOrder(context.Background(), SubmitOrderInput{
 		UserID:      uuid.New(),
@@ -154,6 +193,9 @@ func TestSubmitOrderAccepted(t *testing.T) {
 	}
 	if len(producer.published) != 1 || producer.published[0] != "orders.accepted" {
 		t.Fatalf("expected orders.accepted publish")
+	}
+	if len(ledger.reserved) != 1 {
+		t.Fatalf("expected reserve balance call")
 	}
 }
 
@@ -188,7 +230,7 @@ func TestSubmitOrderRejected(t *testing.T) {
 		OrdersAccepted:  "orders.accepted",
 		OrdersRejected:  "orders.rejected",
 		OrdersCancelled: "orders.cancelled",
-	})
+	}, 50)
 
 	res, err := svc.SubmitOrder(context.Background(), SubmitOrderInput{
 		UserID:      uuid.New(),
@@ -237,7 +279,7 @@ func TestSubmitOrderExisting(t *testing.T) {
 		OrdersAccepted:  "orders.accepted",
 		OrdersRejected:  "orders.rejected",
 		OrdersCancelled: "orders.cancelled",
-	})
+	}, 50)
 
 	res, err := svc.SubmitOrder(context.Background(), SubmitOrderInput{
 		UserID:        uuid.New(),
@@ -286,7 +328,7 @@ func TestCancelOrderPublishesEvent(t *testing.T) {
 		OrdersAccepted:  "orders.accepted",
 		OrdersRejected:  "orders.rejected",
 		OrdersCancelled: "orders.cancelled",
-	})
+	}, 50)
 
 	order, err := svc.CancelOrder(context.Background(), CancelOrderInput{UserID: uuid.New(), OrderID: orderID})
 	if err != nil {
@@ -322,14 +364,14 @@ func TestSubmitOrderLedgerInsufficient(t *testing.T) {
 	}
 
 	risk := &fakeRisk{resp: &riskpb.PreTradeCheckResponse{Allowed: true}}
-	ledger := &fakeLedger{available: "0"}
+	ledger := &fakeLedger{reserveErr: status.Error(codes.FailedPrecondition, "insufficient balance")}
 	producer := &recordProducer{}
 
 	svc := NewOrderService(store, risk, ledger, producer, nil, nil, Topics{
 		OrdersAccepted:  "orders.accepted",
 		OrdersRejected:  "orders.rejected",
 		OrdersCancelled: "orders.cancelled",
-	})
+	}, 50)
 
 	res, err := svc.SubmitOrder(context.Background(), SubmitOrderInput{
 		UserID:      uuid.New(),
@@ -351,6 +393,53 @@ func TestSubmitOrderLedgerInsufficient(t *testing.T) {
 	}
 	if len(producer.published) != 1 || producer.published[0] != "orders.rejected" {
 		t.Fatalf("expected orders.rejected publish")
+	}
+}
+
+func TestSubmitOrderMarketBuyUsesReferencePrice(t *testing.T) {
+	accountID := uuid.New()
+
+	store := &fakeStore{
+		accountID:      accountID,
+		lastTradePrice: decimal.RequireFromString("100"),
+	}
+
+	risk := &fakeRisk{resp: &riskpb.PreTradeCheckResponse{Allowed: true}}
+	ledger := &fakeLedger{}
+
+	svc := NewOrderService(store, risk, ledger, &recordProducer{}, nil, nil, Topics{
+		OrdersAccepted:  "orders.accepted",
+		OrdersRejected:  "orders.rejected",
+		OrdersCancelled: "orders.cancelled",
+	}, 50)
+
+	result, err := svc.SubmitOrder(context.Background(), SubmitOrderInput{
+		UserID:      uuid.New(),
+		Symbol:      "BTC-USD",
+		Side:        "buy",
+		OrderType:   "market",
+		TimeInForce: "IOC",
+		Quantity:    decimal.NewFromInt(2),
+		Price:       nil,
+	})
+	if err != nil {
+		t.Fatalf("SubmitOrder: %v", err)
+	}
+	if result == nil || result.Order == nil {
+		t.Fatalf("expected order result")
+	}
+	if result.Order.Type != "market" {
+		t.Fatalf("expected market order, got %s", result.Order.Type)
+	}
+	if result.Order.Price != nil {
+		t.Fatalf("expected nil price for market order")
+	}
+	if len(ledger.reserved) != 1 {
+		t.Fatalf("expected one reservation, got %d", len(ledger.reserved))
+	}
+	expected := decimal.NewFromInt(2).Mul(decimal.RequireFromString("100")).Mul(decimal.RequireFromString("1.005"))
+	if ledger.reserved[0].Amount != expected.String() {
+		t.Fatalf("expected reserved amount %s, got %s", expected.String(), ledger.reserved[0].Amount)
 	}
 }
 

@@ -23,6 +23,7 @@ type TierStore interface {
 
 type TierCache interface {
 	GetTierByVolume(volume string) (*storage.FeeTier, bool)
+	SetTierByVolume(volume string, tier storage.FeeTier)
 	Size() int
 }
 
@@ -106,6 +107,14 @@ func (s *FeeService) CalculateFees(ctx context.Context, req *feepb.CalculateFees
 		return nil, status.Error(codes.InvalidArgument, "order_type must be maker or taker")
 	}
 
+	side := strings.ToLower(strings.TrimSpace(req.GetSide()))
+	if side != "buy" && side != "sell" {
+		if s.metrics != nil {
+			s.metrics.FeeCalculations.WithLabelValues("invalid").Inc()
+		}
+		return nil, status.Error(codes.InvalidArgument, "side must be buy or sell")
+	}
+
 	symbol := strings.TrimSpace(req.GetSymbol())
 	feeAsset, err := quoteAsset(symbol)
 	if err != nil {
@@ -171,6 +180,9 @@ func (s *FeeService) resolveTier(ctx context.Context, volume string) (*storage.F
 		return nil, false, status.Error(codes.Internal, "fee tier lookup failed")
 	}
 	if tier != nil {
+		if s.cache != nil {
+			s.cache.SetTierByVolume(tier.MinVolume, *tier)
+		}
 		return tier, false, nil
 	}
 
@@ -181,6 +193,9 @@ func (s *FeeService) resolveTier(ctx context.Context, volume string) (*storage.F
 	}
 	if defaultTier == nil {
 		return nil, false, status.Error(codes.NotFound, "fee tier not found")
+	}
+	if s.cache != nil {
+		s.cache.SetTierByVolume(defaultTier.MinVolume, *defaultTier)
 	}
 	return defaultTier, false, nil
 }

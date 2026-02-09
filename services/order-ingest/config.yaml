@@ -14,8 +14,10 @@ kafka:
     orders_rejected: "orders.rejected"
     orders_cancelled: "orders.cancelled"
     trades_executed: "trades.executed"
+    dead_letter: "dead_letter"
 risk_service:
   grpc_addr: "risk:9092"
 ledger_service:
   grpc_addr: "ledger:9091"
 jwt_secret: "dev-secret-change-in-production-min-32-chars"
+market_buy_slippage_bps: 50

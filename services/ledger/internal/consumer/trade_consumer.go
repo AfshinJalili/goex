@@ -96,23 +96,23 @@ func NewTradeConsumer(store OrderLookup, ledger SettlementApplier, producer kafk
 
 func (c *TradeConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
 	if msg == nil || len(msg.Value) == 0 {
-		return fmt.Errorf("empty kafka message")
+		return kafka.DLQ(fmt.Errorf("empty kafka message"), "empty_message")
 	}
 	var event TradeExecutedEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		return fmt.Errorf("decode trades.executed: %w", err)
+		return kafka.DLQ(fmt.Errorf("decode trades.executed: %w", err), "decode")
 	}
 	if err := event.Validate(); err != nil {
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 
 	makerOrderID, err := parseUUID(event.MakerOrderID, "maker_order_id")
 	if err != nil {
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 	takerOrderID, err := parseUUID(event.TakerOrderID, "taker_order_id")
 	if err != nil {
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 
 	makerAccountID, err := c.store.GetOrderAccountID(ctx, makerOrderID)
@@ -134,6 +134,8 @@ func (c *TradeConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerM
 
 	req := &ledgerpb.ApplySettlementRequest{
 		TradeId:        event.TradeID,
+		MakerOrderId:   event.MakerOrderID,
+		TakerOrderId:   event.TakerOrderID,
 		MakerAccountId: makerAccountID.String(),
 		TakerAccountId: takerAccountID.String(),
 		Symbol:         event.Symbol,

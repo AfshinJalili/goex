@@ -37,6 +37,8 @@ fi
 
 export RUN_INTEGRATION=1
 export GATEWAY_URL=${GATEWAY_URL:-http://localhost:8000}
+export RUN_ORDER_INTEGRATION=${RUN_ORDER_INTEGRATION:-}
+export RUN_DB_INTEGRATION=${RUN_DB_INTEGRATION:-}
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
@@ -48,6 +50,8 @@ docker run --rm \
   -v "$REPO_ROOT":/workspace \
   -w /workspace \
   -e RUN_INTEGRATION=1 \
+  -e RUN_ORDER_INTEGRATION="$RUN_ORDER_INTEGRATION" \
+  -e RUN_DB_INTEGRATION="$RUN_DB_INTEGRATION" \
   -e GATEWAY_URL=http://kong:8000 \
   -e ORDER_INGEST_URL=http://order-ingest:8083 \
   -e MATCHING_URL=http://matching:8080 \

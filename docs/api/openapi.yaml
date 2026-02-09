@@ -243,39 +243,48 @@ paths:
       tags:
         - Trading
       summary: Create order
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
-        - apiKeyAuth: []
-          apiSignature: []
-          apiTimestamp: []
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
+            example:
+              symbol: "BTC-USD"
+              side: "buy"
+              type: "limit"
+              price: "100.00"
+              quantity: "1.0"
+              time_in_force: "GTC"
       responses:
         '200':
           description: Order created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrderResponse'
+                $ref: '#/components/schemas/CreateOrderResponse'
+              example:
+                order_id: "2f12a5c6-6b91-4a4d-87db-2f91a7f2d6aa"
+                status: "accepted"
+                created_at: "2026-02-04T12:00:00Z"
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
     get:
       tags:
         - Trading
       summary: List orders
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
-        - apiKeyAuth: []
-          apiSignature: []
-          apiTimestamp: []
+        - bearerAuth: []
       parameters:
         - name: symbol
           in: query
@@ -307,16 +316,28 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  orders:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/OrderResponse'
+                $ref: '#/components/schemas/OrdersListResponse'
+              example:
+                orders:
+                  - order_id: "2f12a5c6-6b91-4a4d-87db-2f91a7f2d6aa"
+                    client_order_id: "client-123"
+                    symbol: "BTC-USD"
+                    side: "buy"
+                    type: "limit"
+                    price: "100.00"
+                    quantity: "1.0"
+                    filled_quantity: "0"
+                    status: "open"
+                    time_in_force: "GTC"
+                    created_at: "2026-02-04T12:00:00Z"
+                    updated_at: "2026-02-04T12:00:00Z"
+                next_cursor: "2026-02-04T12:00:00Z"
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -325,11 +346,9 @@ paths:
       tags:
         - Trading
       summary: Cancel order
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
-        - apiKeyAuth: []
-          apiSignature: []
-          apiTimestamp: []
+        - bearerAuth: []
       parameters:
         - name: order_id
           in: path
@@ -343,17 +362,59 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: cancelled
+                $ref: '#/components/schemas/CancelOrderResponse'
+              example:
+                order_id: "2f12a5c6-6b91-4a4d-87db-2f91a7f2d6aa"
+                status: "cancelled"
+                updated_at: "2026-02-04T12:05:00Z"
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags:
+        - Trading
+      summary: Get order
+      x-implementation-status: implemented
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Order ID
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              example:
+                order_id: "2f12a5c6-6b91-4a4d-87db-2f91a7f2d6aa"
+                client_order_id: "client-123"
+                symbol: "BTC-USD"
+                side: "buy"
+                type: "limit"
+                price: "100.00"
+                quantity: "1.0"
+                filled_quantity: "0"
+                status: "open"
+                time_in_force: "GTC"
+                created_at: "2026-02-04T12:00:00Z"
+                updated_at: "2026-02-04T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -903,7 +964,7 @@ components:
             - FOK
           default: GTC
 
-    OrderResponse:
+    CreateOrderResponse:
       type: object
       properties:
         order_id:
@@ -914,6 +975,67 @@ components:
         created_at:
           type: string
           format: date-time
+
+    CancelOrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+        status:
+          type: string
+          example: cancelled
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+        client_order_id:
+          type: string
+        symbol:
+          type: string
+        side:
+          type: string
+          example: buy
+        type:
+          type: string
+          example: limit
+        price:
+          type: string
+          nullable: true
+          example: "100.00"
+        quantity:
+          type: string
+          example: "1.0"
+        filled_quantity:
+          type: string
+          example: "0"
+        status:
+          type: string
+          example: open
+        time_in_force:
+          type: string
+          example: GTC
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrdersListResponse:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderResponse'
+        next_cursor:
+          type: string
+          nullable: true
 
     ErrorResponse:
       type: object

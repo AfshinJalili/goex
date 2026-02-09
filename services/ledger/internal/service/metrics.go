@@ -1,12 +1,20 @@
 package service
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 type Metrics struct {
 	BalanceLookups     *prometheus.CounterVec
 	SettlementsTotal   *prometheus.CounterVec
 	SettlementErrors   *prometheus.CounterVec
 	SettlementDuration *prometheus.HistogramVec
+	FeeCallDuration    *prometheus.HistogramVec
+	FeeCallRetries     prometheus.Counter
+	FeeCallFailures    *prometheus.CounterVec
+	FeeFallbacks       *prometheus.CounterVec
 }
 
 func NewMetrics(registry *prometheus.Registry) *Metrics {
@@ -40,8 +48,73 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 			},
 			[]string{"method"},
 		),
+		FeeCallDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "ledger_fee_call_duration_seconds",
+				Help:    "Fee service call duration in seconds.",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"status"},
+		),
+		FeeCallRetries: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "ledger_fee_call_retries_total",
+				Help: "Total fee service call retries.",
+			},
+		),
+		FeeCallFailures: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ledger_fee_call_failures_total",
+				Help: "Total fee service call failures.",
+			},
+			[]string{"reason"},
+		),
+		FeeFallbacks: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "ledger_fee_call_fallbacks_total",
+				Help: "Total fee call fallbacks.",
+			},
+			[]string{"policy"},
+		),
 	}
 
-	registry.MustRegister(m.BalanceLookups, m.SettlementsTotal, m.SettlementErrors, m.SettlementDuration)
+	registry.MustRegister(
+		m.BalanceLookups,
+		m.SettlementsTotal,
+		m.SettlementErrors,
+		m.SettlementDuration,
+		m.FeeCallDuration,
+		m.FeeCallRetries,
+		m.FeeCallFailures,
+		m.FeeFallbacks,
+	)
 	return m
+}
+
+func (m *Metrics) ObserveFeeCall(status string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.FeeCallDuration.WithLabelValues(status).Observe(duration.Seconds())
+}
+
+func (m *Metrics) IncFeeRetry() {
+	if m == nil {
+		return
+	}
+	m.FeeCallRetries.Inc()
+}
+
+func (m *Metrics) IncFeeFailure(reason string) {
+	if m == nil {
+		return
+	}
+	m.FeeCallFailures.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) IncFeeFallback(policy string) {
+	if m == nil {
+		return
+	}
+	m.FeeFallbacks.WithLabelValues(policy).Inc()
 }

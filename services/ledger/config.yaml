@@ -11,5 +11,6 @@ kafka:
   consumer_group: "ledger-service"
   topics:
     trades_executed: "trades.executed"
+    dead_letter: "dead_letter"
 fee_service:
   grpc_addr: "fee:9090"

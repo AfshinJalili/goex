@@ -2,6 +2,12 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: cex-postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cex}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cex}
@@ -14,6 +20,12 @@ services:
   timescaledb:
     image: timescale/timescaledb:latest-pg16
     container_name: cex-timescaledb
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
     environment:
       POSTGRES_USER: ${TIMESCALE_USER:-cex_ts}
       POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-cex_ts}
@@ -26,6 +38,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: cex-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
     ports:
       - "6379:6379"
     volumes:
@@ -34,6 +52,12 @@ services:
   kafka:
     image: apache/kafka:3.7.0
     container_name: cex-kafka
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2g
     ports:
       - "9092:9092"
     environment:
@@ -56,6 +80,12 @@ services:
       context: ..
       dockerfile: services/auth/Dockerfile
     container_name: cex-auth
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
     environment:
       CEX_JWT_SECRET: ${CEX_JWT_SECRET:-dev-secret-change-in-production-min-32-chars}
       CEX_ENV: ${CEX_ENV:-dev}
@@ -85,6 +115,12 @@ services:
       context: ..
       dockerfile: services/user/Dockerfile
     container_name: cex-user
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
     environment:
       CEX_JWT_SECRET: ${CEX_JWT_SECRET:-dev-secret-change-in-production-min-32-chars}
       CEX_ENV: ${CEX_ENV:-dev}
@@ -111,11 +147,19 @@ services:
   kong:
     image: kong:3.8.0
     container_name: cex-kong
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1g
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /kong/kong.yaml
       KONG_PROXY_LISTEN: "0.0.0.0:8000"
       KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_NGINX_WORKER_PROCESSES: "1"
+      KONG_MEM_CACHE_SIZE: "64m"
       CEX_JWT_SECRET: ${CEX_JWT_SECRET:-dev-secret-change-in-production-min-32-chars}
     ports:
       - "8000:8000"
@@ -126,7 +170,7 @@ services:
       - auth
       - user
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/status"]
+      test: ["CMD", "kong", "health"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -136,6 +180,12 @@ services:
       context: ..
       dockerfile: services/fee/Dockerfile
     container_name: cex-fee
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
     environment:
       CEX_ENV: ${CEX_ENV:-dev}
       CEX_GRPC_PORT: 9090
@@ -165,6 +215,12 @@ services:
       context: ..
       dockerfile: services/ledger/Dockerfile
     container_name: cex-ledger
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768m
     environment:
       CEX_ENV: ${CEX_ENV:-dev}
       CEX_GRPC_PORT: 9091
@@ -177,6 +233,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cex}
       POSTGRES_SSLMODE: disable
       KAFKA_BROKERS: kafka:9092
+      KAFKA_DLQ_TOPIC: ${KAFKA_DLQ_TOPIC:-dead_letter}
       FEE_SERVICE_ADDR: fee:9090
     ports:
       - "9091:9091"
@@ -198,6 +255,12 @@ services:
       context: ..
       dockerfile: services/risk/Dockerfile
     container_name: cex-risk
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -222,6 +285,12 @@ services:
       context: ..
       dockerfile: services/order-ingest/Dockerfile
     container_name: cex-order-ingest
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768m
     environment:
       CEX_ENV: ${CEX_ENV:-dev}
       CEX_HTTP_PORT: 8083
@@ -240,6 +309,7 @@ services:
       CEX_KAFKA_ORDERS_REJECTED_TOPIC: orders.rejected
       CEX_KAFKA_ORDERS_CANCELLED_TOPIC: orders.cancelled
       CEX_KAFKA_TRADES_TOPIC: trades.executed
+      CEX_KAFKA_DLQ_TOPIC: ${CEX_KAFKA_DLQ_TOPIC:-dead_letter}
       CEX_RISK_SERVICE_GRPC_ADDR: risk:9092
       CEX_LEDGER_SERVICE_GRPC_ADDR: ledger:9091
     ports:
@@ -263,6 +333,12 @@ services:
       context: ..
       dockerfile: services/matching/Dockerfile
     container_name: cex-matching
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
     environment:
       CEX_ENV: ${CEX_ENV:-dev}
       CEX_GRPC_PORT: 9094
@@ -276,6 +352,7 @@ services:
       POSTGRES_SSLMODE: disable
       CEX_KAFKA_BROKERS: kafka:9092
       CEX_KAFKA_CONSUMER_GROUP: matching-engine
+      CEX_KAFKA_DLQ_TOPIC: ${CEX_KAFKA_DLQ_TOPIC:-dead_letter}
     ports:
       - "9095:9094"
       - "8086:8080"

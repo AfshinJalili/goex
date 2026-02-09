@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ import (
 
 type Store interface {
 	GetBalance(ctx context.Context, accountID uuid.UUID, asset string) (storage.LedgerAccount, error)
+	ReserveBalance(ctx context.Context, accountID, orderID uuid.UUID, asset string, amount decimal.Decimal) (*storage.BalanceReservation, error)
+	ReleaseReservation(ctx context.Context, orderID uuid.UUID) (*storage.BalanceReservation, decimal.Decimal, error)
 	ApplySettlement(ctx context.Context, req storage.SettlementRequest) (*storage.SettlementResult, error)
 	GetEntriesByReference(ctx context.Context, referenceID uuid.UUID) ([]storage.LedgerEntry, error)
 }
@@ -73,6 +76,77 @@ func (s *LedgerService) GetBalance(ctx context.Context, req *ledgerpb.GetBalance
 		Available: balance.BalanceAvailable.String(),
 		Locked:    balance.BalanceLocked.String(),
 		UpdatedAt: updatedAt,
+	}, nil
+}
+
+func (s *LedgerService) ReserveBalance(ctx context.Context, req *ledgerpb.ReserveBalanceRequest) (*ledgerpb.ReserveBalanceResponse, error) {
+	accountID, err := parseUUID(req.GetAccountId(), "account_id")
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	orderID, err := parseUUID(req.GetOrderId(), "order_id")
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	asset := strings.TrimSpace(req.GetAsset())
+	if asset == "" {
+		return nil, status.Error(codes.InvalidArgument, "asset is required")
+	}
+	amount, err := parsePositiveDecimal(req.GetAmount(), "amount")
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	reservation, err := s.store.ReserveBalance(ctx, accountID, orderID, asset, amount)
+	if err != nil {
+		if errors.Is(err, storage.ErrInsufficientBalance) {
+			return nil, status.Error(codes.FailedPrecondition, "insufficient balance")
+		}
+		if errors.Is(err, storage.ErrReservationClosed) {
+			return nil, status.Error(codes.FailedPrecondition, "reservation closed")
+		}
+		s.logger.Error("reserve balance failed", "error", err)
+		return nil, status.Error(codes.Internal, "reserve balance failed")
+	}
+
+	balance, err := s.store.GetBalance(ctx, accountID, asset)
+	if err != nil {
+		s.logger.Error("reserve balance lookup failed", "error", err)
+		return nil, status.Error(codes.Internal, "reserve balance failed")
+	}
+
+	return &ledgerpb.ReserveBalanceResponse{
+		Success:       true,
+		ReservationId: reservation.ID.String(),
+		AccountId:     accountID.String(),
+		Asset:         asset,
+		Amount:        reservation.Amount.String(),
+		Available:     balance.BalanceAvailable.String(),
+		Locked:        balance.BalanceLocked.String(),
+	}, nil
+}
+
+func (s *LedgerService) ReleaseBalance(ctx context.Context, req *ledgerpb.ReleaseBalanceRequest) (*ledgerpb.ReleaseBalanceResponse, error) {
+	orderID, err := parseUUID(req.GetOrderId(), "order_id")
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	reservation, released, err := s.store.ReleaseReservation(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, storage.ErrReservationNotFound) {
+			return nil, status.Error(codes.NotFound, "reservation not found")
+		}
+		s.logger.Error("release balance failed", "error", err)
+		return nil, status.Error(codes.Internal, "release balance failed")
+	}
+
+	return &ledgerpb.ReleaseBalanceResponse{
+		Success:        true,
+		OrderId:        orderID.String(),
+		AccountId:      reservation.AccountID.String(),
+		Asset:          reservation.Asset,
+		ReleasedAmount: released.String(),
 	}, nil
 }
 
@@ -133,6 +207,20 @@ func (s *LedgerService) applySettlement(ctx context.Context, req *ledgerpb.Apply
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	makerOrderID := uuid.Nil
+	if strings.TrimSpace(req.GetMakerOrderId()) != "" {
+		makerOrderID, err = parseUUID(req.GetMakerOrderId(), "maker_order_id")
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+	takerOrderID := uuid.Nil
+	if strings.TrimSpace(req.GetTakerOrderId()) != "" {
+		takerOrderID, err = parseUUID(req.GetTakerOrderId(), "taker_order_id")
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
 	makerAccountID, err := parseUUID(req.GetMakerAccountId(), "maker_account_id")
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -162,6 +250,8 @@ func (s *LedgerService) applySettlement(ctx context.Context, req *ledgerpb.Apply
 
 	result, err := s.store.ApplySettlement(ctx, storage.SettlementRequest{
 		TradeID:        tradeID,
+		MakerOrderID:   makerOrderID,
+		TakerOrderID:   takerOrderID,
 		MakerAccountID: makerAccountID,
 		TakerAccountID: takerAccountID,
 		Symbol:         symbol,

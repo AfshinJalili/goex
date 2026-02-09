@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AfshinJalili/goex/services/risk/internal/storage"
@@ -20,6 +21,7 @@ type Store interface {
 	GetAccountInfo(ctx context.Context, accountID uuid.UUID) (*storage.AccountInfo, error)
 	GetMarketBySymbol(ctx context.Context, symbol string) (*storage.Market, error)
 	CheckBalance(ctx context.Context, accountID uuid.UUID, asset string, required decimal.Decimal) (*storage.BalanceCheck, error)
+	GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error)
 }
 
 type MarketCache interface {
@@ -28,17 +30,29 @@ type MarketCache interface {
 
 type RiskService struct {
 	riskpb.UnimplementedRiskServer
-	store   Store
-	cache   MarketCache
-	logger  *slog.Logger
-	metrics *Metrics
+	store                Store
+	cache                MarketCache
+	logger               *slog.Logger
+	metrics              *Metrics
+	marketBuySlippageBps int
+	balanceBreaker       *circuitBreaker
 }
 
-func NewRiskService(store Store, cache MarketCache, logger *slog.Logger, metrics *Metrics) *RiskService {
+func NewRiskService(store Store, cache MarketCache, logger *slog.Logger, metrics *Metrics, marketBuySlippageBps int) *RiskService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RiskService{store: store, cache: cache, logger: logger, metrics: metrics}
+	if marketBuySlippageBps < 0 {
+		marketBuySlippageBps = 0
+	}
+	return &RiskService{
+		store:                store,
+		cache:                cache,
+		logger:               logger,
+		metrics:              metrics,
+		marketBuySlippageBps: marketBuySlippageBps,
+		balanceBreaker:       newCircuitBreaker(3, 30*time.Second),
+	}
 }
 
 func (s *RiskService) PreTradeCheck(ctx context.Context, req *riskpb.PreTradeCheckRequest) (*riskpb.PreTradeCheckResponse, error) {
@@ -148,15 +162,36 @@ func (s *RiskService) PreTradeCheck(ctx context.Context, req *riskpb.PreTradeChe
 			requiredAmount = quantity
 		case "buy":
 			requiredAsset = market.QuoteAsset
-			requiredAmount = quantity.Mul(price)
+			if orderType == "market" {
+				refPrice, err := s.marketBuyReferencePrice(ctx, normalizedSymbol)
+				if err != nil {
+					denialReasons = append(denialReasons, "market_price_unavailable")
+					details["required_asset"] = requiredAsset
+					break
+				}
+				requiredAmount = quantity.Mul(refPrice)
+				details["reference_price"] = refPrice.String()
+			} else {
+				requiredAmount = quantity.Mul(price)
+			}
 		}
 
-		if requiredAsset != "" {
+		if requiredAsset != "" && len(denialReasons) == 0 {
+			if s.balanceBreaker != nil && !s.balanceBreaker.Allow() {
+				s.recordMetrics("denied", "balance", start)
+				return nil, status.Error(codes.Unavailable, "balance service unavailable")
+			}
 			balance, err := s.store.CheckBalance(ctx, accountID, requiredAsset, requiredAmount)
 			if err != nil {
+				if s.balanceBreaker != nil {
+					s.balanceBreaker.RecordFailure()
+				}
 				s.logger.Error("balance check failed", "account_id", accountID.String(), "asset", requiredAsset, "error", err)
 				s.recordMetrics("denied", "balance", start)
 				return nil, status.Error(codes.Internal, "balance check failed")
+			}
+			if s.balanceBreaker != nil {
+				s.balanceBreaker.RecordSuccess()
 			}
 			if !balance.Sufficient {
 				denialReasons = append(denialReasons, "insufficient_balance")
@@ -226,11 +261,29 @@ func reasonCategory(reason string) string {
 		return "kyc"
 	case "market_not_found", "market_inactive":
 		return "market_status"
+	case "market_price_unavailable":
+		return "market_status"
 	case "insufficient_balance":
 		return "balance"
 	default:
 		return "invalid"
 	}
+}
+
+func (s *RiskService) marketBuyReferencePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	if s.store == nil {
+		return decimal.Zero, fmt.Errorf("store not configured")
+	}
+	price, err := s.store.GetLastTradePrice(ctx, symbol)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if price.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, fmt.Errorf("reference price unavailable")
+	}
+	slippage := decimal.NewFromInt(int64(s.marketBuySlippageBps)).Div(decimal.NewFromInt(10000))
+	factor := decimal.NewFromInt(1).Add(slippage)
+	return price.Mul(factor), nil
 }
 
 func parseUUID(value, field string) (uuid.UUID, error) {
@@ -258,4 +311,64 @@ func parsePositiveDecimal(value, field string) (decimal.Decimal, error) {
 		return decimal.Zero, fmt.Errorf("%s must be positive", field)
 	}
 	return dec, nil
+}
+
+type circuitBreaker struct {
+	mu          sync.Mutex
+	failures    int
+	threshold   int
+	openedUntil time.Time
+	cooldown    time.Duration
+}
+
+func newCircuitBreaker(threshold int, cooldown time.Duration) *circuitBreaker {
+	if threshold <= 0 {
+		threshold = 3
+	}
+	if cooldown <= 0 {
+		cooldown = 30 * time.Second
+	}
+	return &circuitBreaker{
+		threshold: threshold,
+		cooldown:  cooldown,
+	}
+}
+
+func (b *circuitBreaker) Allow() bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.openedUntil.IsZero() {
+		return true
+	}
+	if time.Now().After(b.openedUntil) {
+		b.openedUntil = time.Time{}
+		b.failures = 0
+		return true
+	}
+	return false
+}
+
+func (b *circuitBreaker) RecordSuccess() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failures = 0
+	b.openedUntil = time.Time{}
+}
+
+func (b *circuitBreaker) RecordFailure() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failures++
+	if b.failures >= b.threshold {
+		b.openedUntil = time.Now().Add(b.cooldown)
+	}
 }

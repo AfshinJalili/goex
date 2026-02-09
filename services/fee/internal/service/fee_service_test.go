@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/AfshinJalili/goex/services/fee/internal/storage"
@@ -13,10 +14,10 @@ import (
 )
 
 type fakeStore struct {
-	volume      string
-	tier        *storage.FeeTier
-	defaultTier *storage.FeeTier
-	err         error
+	volume              string
+	tier                *storage.FeeTier
+	defaultTier         *storage.FeeTier
+	err                 error
 	calledVolumeLookup  bool
 	calledAccountVolume bool
 }
@@ -44,6 +45,11 @@ func (f *fakeCache) GetTierByVolume(volume string) (*storage.FeeTier, bool) {
 	return f.tier, f.ok
 }
 
+func (f *fakeCache) SetTierByVolume(volume string, tier storage.FeeTier) {
+	f.tier = &tier
+	f.ok = true
+}
+
 func (f *fakeCache) Size() int {
 	return 1
 }
@@ -69,7 +75,8 @@ func TestGetFeeTierFallbackToStore(t *testing.T) {
 	accountID := uuid.New()
 	tier := &storage.FeeTier{ID: uuid.New(), Name: "default", MakerFeeBps: 10, TakerFeeBps: 20, MinVolume: "0"}
 
-	svc := NewFeeService(&fakeStore{tier: tier}, &fakeCache{ok: false}, slog.Default(), nil)
+	cache := &fakeCache{ok: false}
+	svc := NewFeeService(&fakeStore{tier: tier}, cache, slog.Default(), nil)
 	resp, err := svc.GetFeeTier(context.Background(), &feepb.GetFeeTierRequest{
 		AccountId: accountID.String(),
 		Volume:    "0",
@@ -79,6 +86,9 @@ func TestGetFeeTierFallbackToStore(t *testing.T) {
 	}
 	if resp.TierName != "default" {
 		t.Fatalf("expected default, got %s", resp.TierName)
+	}
+	if !cache.ok {
+		t.Fatalf("expected tier to be cached")
 	}
 }
 
@@ -152,7 +162,24 @@ func TestCalculateFeesInvalidOrderType(t *testing.T) {
 	_, err := svc.CalculateFees(context.Background(), &feepb.CalculateFeesRequest{
 		AccountId: accountID.String(),
 		Symbol:    "BTC-USD",
+		Side:      "buy",
 		OrderType: "invalid",
+		Quantity:  "1",
+		Price:     "100",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument, got %v", err)
+	}
+}
+
+func TestCalculateFeesInvalidSide(t *testing.T) {
+	accountID := uuid.New()
+	svc := NewFeeService(&fakeStore{volume: "0"}, &fakeCache{ok: false}, slog.Default(), nil)
+	_, err := svc.CalculateFees(context.Background(), &feepb.CalculateFeesRequest{
+		AccountId: accountID.String(),
+		Symbol:    "BTC-USD",
+		Side:      "hold",
+		OrderType: "maker",
 		Quantity:  "1",
 		Price:     "100",
 	})
@@ -168,6 +195,7 @@ func TestCalculateFeesInvalidSymbol(t *testing.T) {
 	_, err := svc.CalculateFees(context.Background(), &feepb.CalculateFeesRequest{
 		AccountId: accountID.String(),
 		Symbol:    "BTCUSD",
+		Side:      "buy",
 		OrderType: "maker",
 		Quantity:  "1",
 		Price:     "100",
@@ -183,11 +211,46 @@ func TestCalculateFeesTierNotFound(t *testing.T) {
 	_, err := svc.CalculateFees(context.Background(), &feepb.CalculateFeesRequest{
 		AccountId: accountID.String(),
 		Symbol:    "BTC-USD",
+		Side:      "buy",
 		OrderType: "maker",
 		Quantity:  "1",
 		Price:     "100",
 	})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
+func TestCalculateFeesConcurrent(t *testing.T) {
+	accountID := uuid.New()
+	tier := &storage.FeeTier{ID: uuid.New(), Name: "default", MakerFeeBps: 10, TakerFeeBps: 20, MinVolume: "0"}
+	svc := NewFeeService(&fakeStore{volume: "0", defaultTier: tier}, &fakeCache{tier: tier, ok: true}, slog.Default(), nil)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 20)
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.CalculateFees(context.Background(), &feepb.CalculateFeesRequest{
+				AccountId: accountID.String(),
+				Symbol:    "BTC-USD",
+				Side:      "buy",
+				OrderType: "maker",
+				Quantity:  "2",
+				Price:     "100",
+			})
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

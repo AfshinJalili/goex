@@ -136,6 +136,9 @@ Response:
     "created_at": "2026-02-04T12:00:00Z"
   }
 ```
+Notes:
+- For `market` orders, `price` is optional and ignored by the matching engine.
+- For market buys, the system reserves quote using a reference price plus a slippage cap; orders may be rejected if a reference price is unavailable or funds are insufficient.
 
 ### DELETE `/orders/{order_id}`
 ### GET `/orders`

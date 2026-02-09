@@ -51,3 +51,17 @@ func TestOrderBookRemove(t *testing.T) {
 		t.Fatalf("expected second remove to fail")
 	}
 }
+
+func TestOrderBookDuplicateOrderNoop(t *testing.T) {
+	book := NewOrderBook("BTC-USD")
+	order := &Order{ID: "o-dup", Symbol: "BTC-USD", Side: "buy", Type: "limit", Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1)}
+	if err := book.AddOrder(order); err != nil {
+		t.Fatalf("add order: %v", err)
+	}
+	if err := book.AddOrder(order); err != nil {
+		t.Fatalf("add duplicate order: %v", err)
+	}
+	if depth := book.Depth(SideBuy); depth != 1 {
+		t.Fatalf("expected depth 1, got %d", depth)
+	}
+}

@@ -9,3 +9,4 @@ cache:
   refresh_interval: "5m"
 ledger_service:
   grpc_addr: "ledger:9091"
+market_buy_slippage_bps: 50

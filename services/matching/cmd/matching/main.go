@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,8 +81,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer producer.Close()
+	publisher := kafka.Publisher(producer)
+	if strings.TrimSpace(cfg.Kafka.Topics.DeadLetter) != "" {
+		publisher = kafka.NewDLQPublisher(producer, producer, cfg.Kafka.Topics.DeadLetter, logger)
+	}
 
-	engineSvc := engine.NewEngine(snapshotStore, producer, cfg.Kafka.Topics.TradesExecuted, logger, matchingMetrics)
+	engineSvc := engine.NewEngine(snapshotStore, publisher, cfg.Kafka.Topics.TradesExecuted, logger, matchingMetrics)
 
 	grpcServer := grpc.NewServer()
 	matchingpb.RegisterMatchingEngineServer(grpcServer, service.NewMatchingService(engineSvc, logger))
@@ -97,6 +102,7 @@ func main() {
 		logger.Error("kafka consumer init failed", "error", err)
 		os.Exit(1)
 	}
+	consumerGroup.WithDLQ(producer, cfg.Kafka.Topics.DeadLetter)
 	defer consumerGroup.Close()
 
 	orderConsumer := consumer.NewOrderConsumer(engineSvc, logger, cfg.Kafka.Topics.OrdersAccepted, cfg.Kafka.Topics.OrdersCancelled)

@@ -7,28 +7,30 @@ import (
 	"time"
 
 	"github.com/AfshinJalili/goex/libs/kafka"
+	ledgerpb "github.com/AfshinJalili/goex/services/ledger/proto/ledger/v1"
 	"github.com/AfshinJalili/goex/services/order-ingest/internal/storage"
 	"github.com/IBM/sarama"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"google.golang.org/grpc"
 )
 
 type fakeStore struct {
 	eventID string
 	fills   []storage.OrderFill
-	already bool
+	result  storage.ApplyTradeResult
 	err     error
 }
 
-func (f *fakeStore) ApplyTradeExecution(ctx context.Context, eventID string, fills []storage.OrderFill) (bool, error) {
+func (f *fakeStore) ApplyTradeExecution(ctx context.Context, eventID string, fills []storage.OrderFill) (storage.ApplyTradeResult, error) {
 	f.eventID = eventID
 	f.fills = fills
-	return f.already, f.err
+	return f.result, f.err
 }
 
 func TestTradeConsumerHandlesEvent(t *testing.T) {
 	store := &fakeStore{}
-	consumer := NewTradeConsumer(store, nil, nil)
+	consumer := NewTradeConsumer(store, nil, nil, nil)
 
 	event := TradeExecutedEvent{
 		Envelope: kafka.Envelope{
@@ -65,8 +67,8 @@ func TestTradeConsumerHandlesEvent(t *testing.T) {
 }
 
 func TestTradeConsumerAlreadyProcessed(t *testing.T) {
-	store := &fakeStore{already: true}
-	consumer := NewTradeConsumer(store, nil, nil)
+	store := &fakeStore{result: storage.ApplyTradeResult{AlreadyProcessed: true}}
+	consumer := NewTradeConsumer(store, nil, nil, nil)
 
 	event := TradeExecutedEvent{
 		Envelope: kafka.Envelope{
@@ -90,5 +92,54 @@ func TestTradeConsumerAlreadyProcessed(t *testing.T) {
 
 	if err := consumer.HandleMessage(context.Background(), msg); err != nil {
 		t.Fatalf("HandleMessage: %v", err)
+	}
+}
+
+type fakeLedger struct {
+	released []string
+	err      error
+}
+
+func (f *fakeLedger) ReleaseBalance(_ context.Context, in *ledgerpb.ReleaseBalanceRequest, _ ...grpc.CallOption) (*ledgerpb.ReleaseBalanceResponse, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.released = append(f.released, in.GetOrderId())
+	return &ledgerpb.ReleaseBalanceResponse{Success: true}, nil
+}
+
+func TestTradeConsumerReleasesFilledReservations(t *testing.T) {
+	store := &fakeStore{
+		result: storage.ApplyTradeResult{
+			FilledOrderIDs: []uuid.UUID{uuid.New()},
+		},
+	}
+	ledger := &fakeLedger{}
+	consumer := NewTradeConsumer(store, ledger, nil, nil)
+
+	event := TradeExecutedEvent{
+		Envelope: kafka.Envelope{
+			EventID:      "evt_3",
+			EventType:    tradesExecutedEventType,
+			EventVersion: 1,
+			Timestamp:    time.Now().UTC(),
+		},
+		TradeID:      uuid.NewString(),
+		Symbol:       "BTC-USD",
+		MakerOrderID: uuid.NewString(),
+		TakerOrderID: uuid.NewString(),
+		Price:        "100",
+		Quantity:     "1",
+		MakerSide:    "buy",
+	}
+
+	payload, _ := json.Marshal(event)
+	msg := &sarama.ConsumerMessage{Value: payload}
+
+	if err := consumer.HandleMessage(context.Background(), msg); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if len(ledger.released) != 1 {
+		t.Fatalf("expected release call, got %d", len(ledger.released))
 	}
 }

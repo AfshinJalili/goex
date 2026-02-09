@@ -28,8 +28,22 @@ type LedgerEntry struct {
 	CreatedAt       time.Time
 }
 
+type BalanceReservation struct {
+	ID             uuid.UUID
+	OrderID        uuid.UUID
+	AccountID      uuid.UUID
+	Asset          string
+	Amount         decimal.Decimal
+	ConsumedAmount decimal.Decimal
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type SettlementRequest struct {
 	TradeID        uuid.UUID
+	MakerOrderID   uuid.UUID
+	TakerOrderID   uuid.UUID
 	MakerAccountID uuid.UUID
 	TakerAccountID uuid.UUID
 	Symbol         string

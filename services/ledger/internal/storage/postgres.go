@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	feepb "github.com/AfshinJalili/goex/services/fee/proto/fee/v1"
@@ -14,29 +16,53 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
 	referenceTypeTrade = "trade"
 	feeAccountEmail    = "fee@system.local"
 	feeAccountType     = "fee"
+	ledgerEventPrefix  = "ledger:"
 )
 
-var ErrOrderNotFound = errors.New("order not found")
+var (
+	ErrOrderNotFound       = errors.New("order not found")
+	ErrInsufficientBalance = errors.New("insufficient balance")
+	ErrReservationNotFound = errors.New("reservation not found")
+	ErrReservationClosed   = errors.New("reservation closed")
+)
 
 type FeeClient interface {
 	CalculateFees(ctx context.Context, in *feepb.CalculateFeesRequest, opts ...grpc.CallOption) (*feepb.CalculateFeesResponse, error)
 }
 
-type Store struct {
-	pool      *pgxpool.Pool
-	feeClient FeeClient
+type FeeMetrics interface {
+	ObserveFeeCall(status string, duration time.Duration)
+	IncFeeRetry()
+	IncFeeFailure(reason string)
+	IncFeeFallback(policy string)
 }
 
-func New(pool *pgxpool.Pool, feeClient FeeClient) *Store {
+type Store struct {
+	pool       *pgxpool.Pool
+	feeClient  FeeClient
+	feeMetrics FeeMetrics
+	logger     *slog.Logger
+	feeCache   *feeRateCache
+}
+
+func New(pool *pgxpool.Pool, feeClient FeeClient, logger *slog.Logger, feeMetrics FeeMetrics) *Store {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Store{
-		pool:      pool,
-		feeClient: feeClient,
+		pool:       pool,
+		feeClient:  feeClient,
+		feeMetrics: feeMetrics,
+		logger:     logger,
+		feeCache:   newFeeRateCache(15 * time.Minute),
 	}
 }
 
@@ -71,6 +97,186 @@ func (s *Store) GetBalance(ctx context.Context, accountID uuid.UUID, asset strin
 		return LedgerAccount{}, fmt.Errorf("parse locked balance: %w", err)
 	}
 	return acct, nil
+}
+
+func (s *Store) ReserveBalance(ctx context.Context, accountID, orderID uuid.UUID, asset string, amount decimal.Decimal) (*BalanceReservation, error) {
+	asset = strings.ToUpper(strings.TrimSpace(asset))
+	if asset == "" {
+		return nil, fmt.Errorf("asset is required")
+	}
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return nil, fmt.Errorf("amount must be positive")
+	}
+	if orderID == uuid.Nil {
+		return nil, fmt.Errorf("order_id is required")
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, orderID.String()); err != nil {
+		return nil, err
+	}
+
+	existing, err := s.getReservationForUpdate(ctx, tx, orderID)
+	if err == nil {
+		if existing.Status != "active" {
+			return nil, ErrReservationClosed
+		}
+		if existing.AccountID != accountID || strings.ToUpper(existing.Asset) != asset {
+			return nil, fmt.Errorf("reservation mismatch")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		committed = true
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	acct, err := s.getOrCreateLedgerAccountForUpdate(ctx, tx, accountID, asset)
+	if err != nil {
+		return nil, err
+	}
+	if acct.BalanceAvailable.LessThan(amount) {
+		return nil, ErrInsufficientBalance
+	}
+	acct.BalanceAvailable = acct.BalanceAvailable.Sub(amount)
+	acct.BalanceLocked = acct.BalanceLocked.Add(amount)
+	now := time.Now().UTC()
+	acct.UpdatedAt = now
+	if _, err := tx.Exec(ctx, `
+		UPDATE ledger_accounts
+		SET balance_available = $1, balance_locked = $2, updated_at = $3
+		WHERE id = $4
+	`, acct.BalanceAvailable.String(), acct.BalanceLocked.String(), now, acct.ID); err != nil {
+		return nil, err
+	}
+
+	reservationID := uuid.New()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO balance_reservations (id, order_id, account_id, asset, amount, consumed_amount, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 0, 'active', $6, $6)
+	`, reservationID, orderID, accountID, asset, amount.String(), now)
+	if err != nil {
+		if isUniqueViolation(err) {
+			_ = tx.Rollback(ctx)
+			committed = true
+			return s.getReservation(ctx, orderID)
+		} else {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	if existing != nil {
+		return existing, nil
+	}
+
+	return &BalanceReservation{
+		ID:             reservationID,
+		OrderID:        orderID,
+		AccountID:      accountID,
+		Asset:          asset,
+		Amount:         amount,
+		ConsumedAmount: decimal.Zero,
+		Status:         "active",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
+}
+
+func (s *Store) ReleaseReservation(ctx context.Context, orderID uuid.UUID) (*BalanceReservation, decimal.Decimal, error) {
+	if orderID == uuid.Nil {
+		return nil, decimal.Zero, fmt.Errorf("order_id is required")
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	reservation, err := s.getReservationForUpdate(ctx, tx, orderID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, decimal.Zero, ErrReservationNotFound
+		}
+		return nil, decimal.Zero, err
+	}
+
+	remaining := reservation.Amount.Sub(reservation.ConsumedAmount)
+	if remaining.LessThanOrEqual(decimal.Zero) {
+		if reservation.Status != "consumed" {
+			if err := s.updateReservation(ctx, tx, reservation, reservation.ConsumedAmount, "consumed"); err != nil {
+				return nil, decimal.Zero, err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, decimal.Zero, err
+		}
+		committed = true
+		return reservation, decimal.Zero, nil
+	}
+
+	acct, err := s.getOrCreateLedgerAccountForUpdate(ctx, tx, reservation.AccountID, reservation.Asset)
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	releaseAmount := remaining
+	if acct.BalanceLocked.LessThan(releaseAmount) {
+		// Allow release to proceed with available locked funds to avoid blocking order flow.
+		releaseAmount = acct.BalanceLocked
+	}
+	acct.BalanceLocked = acct.BalanceLocked.Sub(releaseAmount)
+	acct.BalanceAvailable = acct.BalanceAvailable.Add(releaseAmount)
+	now := time.Now().UTC()
+	acct.UpdatedAt = now
+	if _, err := tx.Exec(ctx, `
+		UPDATE ledger_accounts
+		SET balance_available = $1, balance_locked = $2, updated_at = $3
+		WHERE id = $4
+	`, acct.BalanceAvailable.String(), acct.BalanceLocked.String(), now, acct.ID); err != nil {
+		return nil, decimal.Zero, err
+	}
+
+	consumed := reservation.Amount.Sub(releaseAmount)
+	status := "released"
+	if consumed.GreaterThanOrEqual(reservation.Amount) {
+		status = "consumed"
+	}
+	if err := s.updateReservation(ctx, tx, reservation, consumed, status); err != nil {
+		return nil, decimal.Zero, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, decimal.Zero, err
+	}
+	committed = true
+
+	reservation.ConsumedAmount = consumed
+	reservation.Status = status
+	reservation.UpdatedAt = now
+	return reservation, releaseAmount, nil
 }
 
 func (s *Store) GetOrderAccountID(ctx context.Context, orderID uuid.UUID) (uuid.UUID, error) {
@@ -117,6 +323,16 @@ func (s *Store) ApplySettlement(ctx context.Context, req SettlementRequest) (*Se
 	}
 
 	notional := req.Price.Mul(req.Quantity)
+	makerReservedAsset := baseAsset
+	makerReservedAmount := req.Quantity
+	takerReservedAsset := quoteAsset
+	takerReservedAmount := notional
+	if makerSide == "buy" {
+		makerReservedAsset = quoteAsset
+		makerReservedAmount = notional
+		takerReservedAsset = baseAsset
+		takerReservedAmount = req.Quantity
+	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -171,6 +387,77 @@ func (s *Store) ApplySettlement(ctx context.Context, req SettlementRequest) (*Se
 		return nil, fmt.Errorf("no settlement entries generated")
 	}
 
+	balanceEntries := make([]pendingEntry, len(pending))
+	copy(balanceEntries, pending)
+
+	makerReservedCover, err := s.reservationCover(ctx, tx, req.MakerOrderID, makerReservedAsset, makerReservedAmount)
+	if err != nil {
+		return nil, err
+	}
+	takerReservedCover, err := s.reservationCover(ctx, tx, req.TakerOrderID, takerReservedAsset, takerReservedAmount)
+	if err != nil {
+		return nil, err
+	}
+
+	reservationRemaining := map[string]decimal.Decimal{}
+	reservationInitial := map[string]decimal.Decimal{}
+	if makerReservedCover.GreaterThan(decimal.Zero) {
+		key := ledgerKey(req.MakerAccountID, makerReservedAsset)
+		reservationRemaining[key] = makerReservedCover
+		reservationInitial[key] = makerReservedCover
+	}
+	if takerReservedCover.GreaterThan(decimal.Zero) {
+		key := ledgerKey(req.TakerAccountID, takerReservedAsset)
+		reservationRemaining[key] = takerReservedCover
+		reservationInitial[key] = takerReservedCover
+	}
+	forcedLockedKeys := map[string]struct{}{}
+	if req.MakerOrderID == uuid.Nil && makerReservedAmount.GreaterThan(decimal.Zero) {
+		forcedLockedKeys[ledgerKey(req.MakerAccountID, makerReservedAsset)] = struct{}{}
+	}
+	if req.TakerOrderID == uuid.Nil && takerReservedAmount.GreaterThan(decimal.Zero) {
+		forcedLockedKeys[ledgerKey(req.TakerAccountID, takerReservedAsset)] = struct{}{}
+	}
+
+	useLockedFlags := make([]bool, len(balanceEntries))
+	for idx := range balanceEntries {
+		entry := &balanceEntries[idx]
+		if entry.EntryType != "debit" || entry.Amount.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		key := ledgerKey(entry.AccountID, entry.Asset)
+		if _, forced := forcedLockedKeys[key]; forced {
+			useLockedFlags[idx] = true
+		}
+		remaining, ok := reservationRemaining[key]
+		if !ok || remaining.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		useLockedFlags[idx] = true
+		consume := remaining
+		if entry.Amount.LessThan(consume) {
+			consume = entry.Amount
+		}
+		if consume.GreaterThan(decimal.Zero) {
+			left := remaining.Sub(consume)
+			if left.LessThanOrEqual(decimal.Zero) {
+				delete(reservationRemaining, key)
+			} else {
+				reservationRemaining[key] = left
+			}
+		}
+	}
+
+	reservationConsumed := make(map[string]decimal.Decimal, len(reservationInitial))
+	for key, initial := range reservationInitial {
+		remaining := reservationRemaining[key]
+		consumed := initial.Sub(remaining)
+		if consumed.LessThan(decimal.Zero) {
+			consumed = decimal.Zero
+		}
+		reservationConsumed[key] = consumed
+	}
+
 	accountMap := make(map[string]*LedgerAccount)
 	for idx := range pending {
 		entry := &pending[idx]
@@ -184,8 +471,42 @@ func (s *Store) ApplySettlement(ctx context.Context, req SettlementRequest) (*Se
 			accountMap[key] = acct
 		}
 		entry.LedgerAccountID = acct.ID
-		if err := applyEntry(acct, entry.EntryType, entry.Amount); err != nil {
+	}
+	for idx := range balanceEntries {
+		entry := &balanceEntries[idx]
+		if entry.Amount.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		key := ledgerKey(entry.AccountID, entry.Asset)
+		acct := accountMap[key]
+		if acct == nil {
+			acct, err = s.getOrCreateLedgerAccountForUpdate(ctx, tx, entry.AccountID, entry.Asset)
+			if err != nil {
+				return nil, err
+			}
+			accountMap[key] = acct
+		}
+		entry.LedgerAccountID = acct.ID
+		useLocked := useLockedFlags[idx]
+		if err := applyEntry(acct, entry.EntryType, entry.Amount, useLocked); err != nil {
 			return nil, err
+		}
+	}
+
+	if makerReservedCover.GreaterThan(decimal.Zero) {
+		consumed := reservationConsumed[ledgerKey(req.MakerAccountID, makerReservedAsset)]
+		if consumed.GreaterThan(decimal.Zero) {
+			if err := s.consumeReservation(ctx, tx, req.MakerOrderID, makerReservedAsset, consumed); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if takerReservedCover.GreaterThan(decimal.Zero) {
+		consumed := reservationConsumed[ledgerKey(req.TakerAccountID, takerReservedAsset)]
+		if consumed.GreaterThan(decimal.Zero) {
+			if err := s.consumeReservation(ctx, tx, req.TakerOrderID, takerReservedAsset, consumed); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -374,50 +695,120 @@ func (s *Store) calculateFee(ctx context.Context, accountID uuid.UUID, symbol, s
 		return feeQuote{}, fmt.Errorf("order_type must be maker or taker")
 	}
 
-	resp, err := s.feeClient.CalculateFees(ctx, &feepb.CalculateFeesRequest{
-		AccountId: accountID.String(),
-		Symbol:    symbol,
-		Side:      side,
-		OrderType: orderType,
-		Quantity:  quantity.String(),
-		Price:     price.String(),
-	})
-	if err != nil {
-		return feeQuote{}, fmt.Errorf("calculate %s fee: %w", orderType, err)
+	if s.feeClient == nil {
+		return feeQuote{}, fmt.Errorf("fee client not configured")
 	}
-	if resp == nil {
-		return feeQuote{}, fmt.Errorf("fee response missing")
+
+	notional := quantity.Mul(price)
+	feeAsset := quoteAsset(symbol)
+	cacheKey := feeRateCacheKey(accountID, orderType, feeAsset)
+
+	var lastErr error
+	startOverall := time.Now()
+	for attempt := 1; attempt <= 3; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+		attemptStart := time.Now()
+		resp, err := s.feeClient.CalculateFees(attemptCtx, &feepb.CalculateFeesRequest{
+			AccountId: accountID.String(),
+			Symbol:    symbol,
+			Side:      side,
+			OrderType: orderType,
+			Quantity:  quantity.String(),
+			Price:     price.String(),
+		})
+		cancel()
+		if err == nil && resp != nil && strings.TrimSpace(resp.FeeAsset) != "" {
+			amount, err := decimal.NewFromString(resp.FeeAmount)
+			if err != nil {
+				return feeQuote{}, fmt.Errorf("parse fee amount: %w", err)
+			}
+			if amount.IsNegative() {
+				return feeQuote{}, fmt.Errorf("fee amount must be non-negative")
+			}
+			if s.feeMetrics != nil {
+				s.feeMetrics.ObserveFeeCall("success", time.Since(attemptStart))
+			}
+			if notional.GreaterThan(decimal.Zero) {
+				rate := amount.Div(notional)
+				if rate.GreaterThanOrEqual(decimal.Zero) {
+					s.feeCache.set(cacheKey, rate, resp.FeeAsset)
+				}
+			}
+			return feeQuote{
+				Asset:  resp.FeeAsset,
+				Amount: amount,
+			}, nil
+		}
+
+		if err == nil && resp == nil {
+			err = fmt.Errorf("fee response missing")
+		}
+		if err == nil && resp != nil && strings.TrimSpace(resp.FeeAsset) == "" {
+			err = fmt.Errorf("fee asset missing")
+		}
+
+		lastErr = err
+		retriable, reason := isFeeRetriable(err)
+		if s.feeMetrics != nil {
+			s.feeMetrics.ObserveFeeCall("error", time.Since(attemptStart))
+			if retriable {
+				s.feeMetrics.IncFeeRetry()
+			} else {
+				s.feeMetrics.IncFeeFailure(reason)
+			}
+		}
+		if !retriable {
+			return feeQuote{}, fmt.Errorf("calculate %s fee: %w", orderType, err)
+		}
+		if attempt < 3 {
+			time.Sleep(backoffDuration(attempt))
+		}
 	}
-	if resp.FeeAsset == "" {
-		return feeQuote{}, fmt.Errorf("fee asset missing")
+
+	if s.feeMetrics != nil {
+		s.feeMetrics.ObserveFeeCall("failure", time.Since(startOverall))
+		s.feeMetrics.IncFeeFailure("unavailable")
 	}
-	amount, err := decimal.NewFromString(resp.FeeAmount)
-	if err != nil {
-		return feeQuote{}, fmt.Errorf("parse fee amount: %w", err)
+	if entry, ok := s.feeCache.get(cacheKey); ok && notional.GreaterThan(decimal.Zero) {
+		amount := notional.Mul(entry.rate)
+		if s.feeMetrics != nil {
+			s.feeMetrics.IncFeeFallback("cached")
+		}
+		s.logger.Warn("fee service unavailable, using cached rate", "order_type", orderType, "account_id", accountID.String())
+		return feeQuote{
+			Asset:  entry.asset,
+			Amount: amount,
+		}, nil
 	}
-	if amount.IsNegative() {
-		return feeQuote{}, fmt.Errorf("fee amount must be non-negative")
+
+	if s.feeMetrics != nil {
+		s.feeMetrics.IncFeeFallback("zero")
 	}
+	s.logger.Warn("fee service unavailable, using zero fee", "order_type", orderType, "account_id", accountID.String(), "error", lastErr)
 	return feeQuote{
-		Asset:  resp.FeeAsset,
-		Amount: amount,
+		Asset:  feeAsset,
+		Amount: decimal.Zero,
 	}, nil
 }
 
 func (s *Store) insertProcessedEvent(ctx context.Context, tx pgx.Tx, eventID string) (bool, error) {
+	keys := ledgerEventKeys(eventID)
+	if len(keys) == 0 {
+		return false, nil
+	}
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO processed_events (event_id)
-		VALUES ($1)
+		SELECT unnest($1::text[])
 		ON CONFLICT (event_id) DO NOTHING
-	`, eventID)
+	`, keys)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *Store) markEventProcessed(ctx context.Context, tx pgx.Tx, eventID string) error {
-	if strings.TrimSpace(eventID) == "" {
+	if len(ledgerEventKeys(eventID)) == 0 {
 		return nil
 	}
 	_, err := s.insertProcessedEvent(ctx, tx, eventID)
@@ -425,7 +816,7 @@ func (s *Store) markEventProcessed(ctx context.Context, tx pgx.Tx, eventID strin
 }
 
 func (s *Store) recordProcessedEvent(ctx context.Context, eventID string) error {
-	if strings.TrimSpace(eventID) == "" {
+	if len(ledgerEventKeys(eventID)) == 0 {
 		return nil
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -442,16 +833,53 @@ func (s *Store) recordProcessedEvent(ctx context.Context, eventID string) error 
 }
 
 func (s *Store) isEventProcessed(ctx context.Context, tx pgx.Tx, eventID string) (bool, error) {
+	keys := ledgerEventKeys(eventID)
+	if len(keys) == 0 {
+		return false, nil
+	}
 	var exists bool
 	row := tx.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM processed_events WHERE event_id = $1
+			SELECT 1 FROM processed_events WHERE event_id = ANY($1::text[])
 		)
-	`, eventID)
+	`, keys)
 	if err := row.Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists, nil
+}
+
+func ledgerEventKey(eventID string) string {
+	trimmed := strings.TrimSpace(eventID)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, ledgerEventPrefix) {
+		return trimmed
+	}
+	return ledgerEventPrefix + trimmed
+}
+
+func ledgerEventKeys(eventID string) []string {
+	trimmed := strings.TrimSpace(eventID)
+	if trimmed == "" {
+		return nil
+	}
+	keys := map[string]struct{}{}
+	keys[trimmed] = struct{}{}
+	if strings.HasPrefix(trimmed, ledgerEventPrefix) {
+		raw := strings.TrimPrefix(trimmed, ledgerEventPrefix)
+		if raw != "" {
+			keys[raw] = struct{}{}
+		}
+	} else {
+		keys[ledgerEventPrefix+trimmed] = struct{}{}
+	}
+	result := make([]string, 0, len(keys))
+	for key := range keys {
+		result = append(result, key)
+	}
+	return result
 }
 
 func (s *Store) getOrCreateLedgerAccountForUpdate(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, asset string) (*LedgerAccount, error) {
@@ -499,6 +927,141 @@ func (s *Store) getLedgerAccountForUpdate(ctx context.Context, tx pgx.Tx, accoun
 	return &acct, nil
 }
 
+func (s *Store) getReservationForUpdate(ctx context.Context, tx pgx.Tx, orderID uuid.UUID) (*BalanceReservation, error) {
+	var res BalanceReservation
+	var amountStr, consumedStr string
+	row := tx.QueryRow(ctx, `
+		SELECT id, order_id, account_id, asset, amount::text, consumed_amount::text, status, created_at, updated_at
+		FROM balance_reservations
+		WHERE order_id = $1
+		FOR UPDATE
+	`, orderID)
+	if err := row.Scan(&res.ID, &res.OrderID, &res.AccountID, &res.Asset, &amountStr, &consumedStr, &res.Status, &res.CreatedAt, &res.UpdatedAt); err != nil {
+		return nil, err
+	}
+	var err error
+	res.Amount, err = decimal.NewFromString(amountStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse reservation amount: %w", err)
+	}
+	res.ConsumedAmount, err = decimal.NewFromString(consumedStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse reservation consumed amount: %w", err)
+	}
+	return &res, nil
+}
+
+func (s *Store) getReservation(ctx context.Context, orderID uuid.UUID) (*BalanceReservation, error) {
+	var res BalanceReservation
+	var amountStr, consumedStr string
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, order_id, account_id, asset, amount::text, consumed_amount::text, status, created_at, updated_at
+		FROM balance_reservations
+		WHERE order_id = $1
+	`, orderID)
+	if err := row.Scan(&res.ID, &res.OrderID, &res.AccountID, &res.Asset, &amountStr, &consumedStr, &res.Status, &res.CreatedAt, &res.UpdatedAt); err != nil {
+		return nil, err
+	}
+	var err error
+	res.Amount, err = decimal.NewFromString(amountStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse reservation amount: %w", err)
+	}
+	res.ConsumedAmount, err = decimal.NewFromString(consumedStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse reservation consumed amount: %w", err)
+	}
+	return &res, nil
+}
+
+func (s *Store) updateReservation(ctx context.Context, tx pgx.Tx, reservation *BalanceReservation, consumed decimal.Decimal, status string) error {
+	if reservation == nil {
+		return fmt.Errorf("reservation required")
+	}
+	now := time.Now().UTC()
+	_, err := tx.Exec(ctx, `
+		UPDATE balance_reservations
+		SET consumed_amount = $1, status = $2, updated_at = $3
+		WHERE id = $4
+	`, consumed.String(), status, now, reservation.ID)
+	return err
+}
+
+func (s *Store) reservationCover(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, asset string, desired decimal.Decimal) (decimal.Decimal, error) {
+	if orderID == uuid.Nil || desired.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, nil
+	}
+	reservation, err := s.getReservationForUpdate(ctx, tx, orderID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return decimal.Zero, nil
+		}
+		return decimal.Zero, err
+	}
+	if reservation.Status != "active" {
+		return decimal.Zero, nil
+	}
+	if strings.ToUpper(reservation.Asset) != strings.ToUpper(strings.TrimSpace(asset)) {
+		return decimal.Zero, fmt.Errorf("reservation asset mismatch")
+	}
+	remaining := reservation.Amount.Sub(reservation.ConsumedAmount)
+	if remaining.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, nil
+	}
+	if desired.GreaterThan(remaining) {
+		return remaining, nil
+	}
+	return desired, nil
+}
+
+func (s *Store) consumeReservation(ctx context.Context, tx pgx.Tx, orderID uuid.UUID, asset string, amount decimal.Decimal) error {
+	if orderID == uuid.Nil {
+		return nil
+	}
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return nil
+	}
+	asset = strings.ToUpper(strings.TrimSpace(asset))
+	if asset == "" {
+		return nil
+	}
+
+	reservation, err := s.getReservationForUpdate(ctx, tx, orderID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if strings.ToUpper(reservation.Asset) != asset {
+		return fmt.Errorf("reservation asset mismatch")
+	}
+	if reservation.Status != "active" {
+		return nil
+	}
+
+	remaining := reservation.Amount.Sub(reservation.ConsumedAmount)
+	if remaining.LessThanOrEqual(decimal.Zero) {
+		return nil
+	}
+
+	consume := amount
+	if consume.GreaterThan(remaining) {
+		consume = remaining
+	}
+	if consume.LessThanOrEqual(decimal.Zero) {
+		return nil
+	}
+
+	newConsumed := reservation.ConsumedAmount.Add(consume)
+	status := reservation.Status
+	if newConsumed.GreaterThanOrEqual(reservation.Amount) {
+		status = "consumed"
+	}
+
+	return s.updateReservation(ctx, tx, reservation, newConsumed, status)
+}
+
 func (s *Store) getOrCreateFeeAccount(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(424242)); err != nil {
 		return uuid.Nil, err
@@ -540,6 +1103,58 @@ func (s *Store) getOrCreateFeeAccount(ctx context.Context, tx pgx.Tx) (uuid.UUID
 type feeQuote struct {
 	Asset  string
 	Amount decimal.Decimal
+}
+
+type feeRateCache struct {
+	mu      sync.Mutex
+	ttl     time.Duration
+	entries map[string]feeRateCacheEntry
+}
+
+type feeRateCacheEntry struct {
+	rate    decimal.Decimal
+	asset   string
+	expires time.Time
+}
+
+func newFeeRateCache(ttl time.Duration) *feeRateCache {
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	return &feeRateCache{
+		ttl:     ttl,
+		entries: make(map[string]feeRateCacheEntry),
+	}
+}
+
+func (c *feeRateCache) get(key string) (feeRateCacheEntry, bool) {
+	if c == nil {
+		return feeRateCacheEntry{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok {
+		return feeRateCacheEntry{}, false
+	}
+	if time.Now().After(entry.expires) {
+		delete(c.entries, key)
+		return feeRateCacheEntry{}, false
+	}
+	return entry, true
+}
+
+func (c *feeRateCache) set(key string, rate decimal.Decimal, asset string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = feeRateCacheEntry{
+		rate:    rate,
+		asset:   asset,
+		expires: time.Now().Add(c.ttl),
+	}
 }
 
 type pendingEntry struct {
@@ -586,14 +1201,14 @@ func buildSettlementEntries(makerAccountID, takerAccountID, feeAccountID uuid.UU
 	return aggregateEntries(entries)
 }
 
-func applyEntry(acct *LedgerAccount, entryType string, amount decimal.Decimal) error {
+func applyEntry(acct *LedgerAccount, entryType string, amount decimal.Decimal, useLocked bool) error {
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return fmt.Errorf("amount must be positive")
 	}
 	switch entryType {
 	case "debit":
 		remaining := amount
-		if acct.BalanceLocked.GreaterThan(decimal.Zero) {
+		if useLocked && acct.BalanceLocked.GreaterThan(decimal.Zero) {
 			if acct.BalanceLocked.GreaterThanOrEqual(remaining) {
 				acct.BalanceLocked = acct.BalanceLocked.Sub(remaining)
 				remaining = decimal.Zero
@@ -689,6 +1304,14 @@ func splitSymbol(symbol string) (string, string, error) {
 	return "", "", fmt.Errorf("symbol must be in BASE-QUOTE format")
 }
 
+func quoteAsset(symbol string) string {
+	_, quote, err := splitSymbol(symbol)
+	if err != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(quote))
+}
+
 func oppositeSide(side string) string {
 	if side == "buy" {
 		return "sell"
@@ -706,4 +1329,36 @@ func isUniqueViolation(err error) bool {
 		return pgErr.Code == "23505"
 	}
 	return false
+}
+
+func feeRateCacheKey(accountID uuid.UUID, orderType, asset string) string {
+	return accountID.String() + ":" + strings.ToLower(strings.TrimSpace(orderType)) + ":" + strings.ToUpper(strings.TrimSpace(asset))
+}
+
+func isFeeRetriable(err error) (bool, string) {
+	if err == nil {
+		return false, "none"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true, "timeout"
+	}
+	if st, ok := status.FromError(err); ok {
+		switch st.Code() {
+		case codes.Unavailable:
+			return true, "unavailable"
+		case codes.DeadlineExceeded:
+			return true, "timeout"
+		default:
+			return false, st.Code().String()
+		}
+	}
+	return false, "error"
+}
+
+func backoffDuration(attempt int) time.Duration {
+	base := 100 * time.Millisecond
+	if attempt <= 1 {
+		return base
+	}
+	return base * time.Duration(attempt)
 }

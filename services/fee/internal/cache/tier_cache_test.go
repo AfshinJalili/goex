@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,43 @@ type fakeStore struct {
 
 func (f *fakeStore) GetAllFeeTiers(ctx context.Context) ([]storage.FeeTier, error) {
 	return f.tiers, nil
+}
+
+type errorStore struct{}
+
+func (e *errorStore) GetAllFeeTiers(ctx context.Context) ([]storage.FeeTier, error) {
+	return nil, errors.New("boom")
+}
+
+type fakeMetrics struct {
+	mu       sync.Mutex
+	refresh  int
+	errors   int
+	lastSize int
+}
+
+func (m *fakeMetrics) ObserveRefresh(_ time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.refresh++
+}
+
+func (m *fakeMetrics) SetCacheSize(size int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastSize = size
+}
+
+func (m *fakeMetrics) IncRefreshError() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.errors++
+}
+
+func (m *fakeMetrics) Snapshot() (int, int, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.refresh, m.errors, m.lastSize
 }
 
 func TestTierCacheLookup(t *testing.T) {
@@ -120,4 +159,65 @@ func TestTierCacheInvalidVolume(t *testing.T) {
 	if cache.LastRefresh().Before(time.Now().Add(-1 * time.Minute)) {
 		t.Fatalf("unexpected last refresh time")
 	}
+}
+
+func TestTierCacheAutoRefresh(t *testing.T) {
+	cache := NewTierCache()
+	store := &fakeStore{tiers: []storage.FeeTier{
+		{ID: uuid.New(), Name: "default", MakerFeeBps: 10, TakerFeeBps: 20, MinVolume: "0"},
+	}}
+	if err := cache.Load(context.Background(), store); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+
+	metrics := &fakeMetrics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cache.StartAutoRefresh(ctx, store, 10*time.Millisecond, metrics, slog.Default())
+	store.tiers = append(store.tiers, storage.FeeTier{ID: uuid.New(), Name: "vip", MakerFeeBps: 5, TakerFeeBps: 10, MinVolume: "1000"})
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if cache.Size() == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	refreshes, _, size := metrics.Snapshot()
+	if refreshes == 0 {
+		t.Fatalf("expected refreshes to occur")
+	}
+	if size != cache.Size() {
+		t.Fatalf("expected cache size metric %d, got %d", cache.Size(), size)
+	}
+	if cache.Size() != 2 {
+		t.Fatalf("expected cache size 2, got %d", cache.Size())
+	}
+}
+
+func TestTierCacheAutoRefreshErrors(t *testing.T) {
+	cache := NewTierCache()
+	if err := cache.Load(context.Background(), &fakeStore{tiers: []storage.FeeTier{
+		{ID: uuid.New(), Name: "default", MakerFeeBps: 10, TakerFeeBps: 20, MinVolume: "0"},
+	}}); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+
+	metrics := &fakeMetrics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cache.StartAutoRefresh(ctx, &errorStore{}, 10*time.Millisecond, metrics, slog.Default())
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		_, errorsCount, _ := metrics.Snapshot()
+		if errorsCount > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected refresh errors to be recorded")
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"log/slog"
 )
 
@@ -36,6 +38,7 @@ type OrderStore interface {
 	GetAccountIDForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 	GetOrderByClientID(ctx context.Context, accountID uuid.UUID, clientOrderID string) (*storage.Order, error)
 	GetOrderByID(ctx context.Context, orderID uuid.UUID) (*storage.Order, error)
+	GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error)
 	CreateOrder(ctx context.Context, order storage.Order) (*storage.Order, bool, error)
 	ListOrders(ctx context.Context, accountID uuid.UUID, filter storage.OrderFilter) ([]storage.Order, string, error)
 	CancelOrder(ctx context.Context, orderID, accountID uuid.UUID) (*storage.Order, error)
@@ -47,17 +50,19 @@ type RiskClient interface {
 }
 
 type LedgerClient interface {
-	GetBalance(ctx context.Context, in *ledgerpb.GetBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.GetBalanceResponse, error)
+	ReserveBalance(ctx context.Context, in *ledgerpb.ReserveBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.ReserveBalanceResponse, error)
+	ReleaseBalance(ctx context.Context, in *ledgerpb.ReleaseBalanceRequest, opts ...grpc.CallOption) (*ledgerpb.ReleaseBalanceResponse, error)
 }
 
 type OrderService struct {
-	store    OrderStore
-	risk     RiskClient
-	ledger   LedgerClient
-	producer kafka.Publisher
-	logger   *slog.Logger
-	metrics  *Metrics
-	topics   Topics
+	store                OrderStore
+	risk                 RiskClient
+	ledger               LedgerClient
+	producer             kafka.Publisher
+	logger               *slog.Logger
+	metrics              *Metrics
+	topics               Topics
+	marketBuySlippageBps int
 }
 
 type SubmitOrderInput struct {
@@ -100,18 +105,22 @@ type GetOrderInput struct {
 	OrderID uuid.UUID
 }
 
-func NewOrderService(store OrderStore, risk RiskClient, ledger LedgerClient, producer kafka.Publisher, logger *slog.Logger, metrics *Metrics, topics Topics) *OrderService {
+func NewOrderService(store OrderStore, risk RiskClient, ledger LedgerClient, producer kafka.Publisher, logger *slog.Logger, metrics *Metrics, topics Topics, marketBuySlippageBps int) *OrderService {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if marketBuySlippageBps < 0 {
+		marketBuySlippageBps = 0
+	}
 	return &OrderService{
-		store:    store,
-		risk:     risk,
-		ledger:   ledger,
-		producer: producer,
-		logger:   logger,
-		metrics:  metrics,
-		topics:   topics,
+		store:                store,
+		risk:                 risk,
+		ledger:               ledger,
+		producer:             producer,
+		logger:               logger,
+		metrics:              metrics,
+		topics:               topics,
+		marketBuySlippageBps: marketBuySlippageBps,
 	}
 }
 
@@ -150,10 +159,21 @@ func (s *OrderService) SubmitOrder(ctx context.Context, input SubmitOrderInput) 
 	if clientOrderID == "" {
 		clientOrderID = uuid.NewString()
 	}
+	orderID := uuid.New()
+
+	effectiveType := strings.ToLower(strings.TrimSpace(input.OrderType))
+	effectiveTIF := strings.ToUpper(strings.TrimSpace(input.TimeInForce))
+	if effectiveTIF == "" {
+		effectiveTIF = "GTC"
+	}
+	effectivePrice := input.Price
+	if effectiveType == "market" {
+		effectivePrice = nil
+	}
 
 	priceStr := ""
-	if input.Price != nil {
-		priceStr = input.Price.String()
+	if effectivePrice != nil {
+		priceStr = effectivePrice.String()
 	}
 
 	riskStatus := "error"
@@ -165,7 +185,7 @@ func (s *OrderService) SubmitOrder(ctx context.Context, input SubmitOrderInput) 
 		AccountId: accountID.String(),
 		Symbol:    input.Symbol,
 		Side:      input.Side,
-		OrderType: input.OrderType,
+		OrderType: effectiveType,
 		Quantity:  input.Quantity.String(),
 		Price:     priceStr,
 	})
@@ -187,21 +207,22 @@ func (s *OrderService) SubmitOrder(ctx context.Context, input SubmitOrderInput) 
 		return nil, err
 	}
 
-	orderPrice := input.Price
-	if input.OrderType == "market" {
+	orderPrice := effectivePrice
+	if effectiveType == "market" {
 		orderPrice = nil
 	}
 
 	order := storage.Order{
+		ID:             orderID,
 		ClientOrderID:  clientOrderID,
 		AccountID:      accountID,
 		Symbol:         input.Symbol,
 		Side:           input.Side,
-		Type:           input.OrderType,
+		Type:           effectiveType,
 		Price:          orderPrice,
 		Quantity:       input.Quantity,
 		FilledQuantity: decimal.Zero,
-		TimeInForce:    input.TimeInForce,
+		TimeInForce:    effectiveTIF,
 	}
 
 	if !riskResp.Allowed {
@@ -230,7 +251,7 @@ func (s *OrderService) SubmitOrder(ctx context.Context, input SubmitOrderInput) 
 		}, nil
 	}
 
-	ledgerOK, ledgerDetails, err := s.checkLedgerBalance(ctx, accountID, input.Side, input.Symbol, input.Quantity, input.Price)
+	ledgerOK, ledgerDetails, err := s.checkLedgerBalance(ctx, orderID, accountID, input.Side, effectiveType, input.Symbol, input.Quantity, effectivePrice)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.OrderSubmissions.WithLabelValues("error").Inc()
@@ -264,14 +285,37 @@ func (s *OrderService) SubmitOrder(ctx context.Context, input SubmitOrderInput) 
 		}, nil
 	}
 
+	reserved := s.ledger != nil
 	order.Status = storage.OrderStatusPending
 	stored, created, err := s.store.CreateOrder(ctx, order)
 	if err != nil {
+		if reserved {
+			if releaseErr := s.releaseReservation(ctx, order.ID); releaseErr != nil {
+				return nil, releaseErr
+			}
+		}
 		if s.metrics != nil {
 			s.metrics.OrderSubmissions.WithLabelValues("error").Inc()
 			s.metrics.OrderSubmissionLatency.WithLabelValues("error").Observe(time.Since(start).Seconds())
 		}
 		return nil, err
+	}
+	if !created {
+		if reserved {
+			if err := s.releaseReservation(ctx, order.ID); err != nil {
+				return nil, err
+			}
+		}
+		if s.metrics != nil {
+			label := responseStatus(stored.Status)
+			s.metrics.OrderSubmissions.WithLabelValues(label).Inc()
+			s.metrics.OrderSubmissionLatency.WithLabelValues(label).Observe(time.Since(start).Seconds())
+		}
+		return &SubmitOrderResult{
+			Order:    stored,
+			Status:   responseStatus(stored.Status),
+			Existing: true,
+		}, nil
 	}
 	if created {
 		s.publishOrderAccepted(ctx, input.CorrelationID, stored)
@@ -304,6 +348,32 @@ func (s *OrderService) CancelOrder(ctx context.Context, input CancelOrderInput) 
 
 	order, err := s.store.CancelOrder(ctx, input.OrderID, accountID)
 	if err != nil {
+		if errors.Is(err, storage.ErrInvalidStatus) {
+			existing, fetchErr := s.store.GetOrderByID(ctx, input.OrderID)
+			if fetchErr == nil && existing.AccountID == accountID && existing.Status == storage.OrderStatusCancelled {
+				order = existing
+			} else {
+				if s.metrics != nil {
+					s.metrics.OrderCancellations.WithLabelValues("error").Inc()
+				}
+				return nil, err
+			}
+		} else {
+			if s.metrics != nil {
+				s.metrics.OrderCancellations.WithLabelValues("error").Inc()
+			}
+			return nil, err
+		}
+	}
+
+	if order == nil {
+		if s.metrics != nil {
+			s.metrics.OrderCancellations.WithLabelValues("error").Inc()
+		}
+		return nil, storage.ErrNotFound
+	}
+
+	if err := s.releaseReservation(ctx, order.ID); err != nil {
 		if s.metrics != nil {
 			s.metrics.OrderCancellations.WithLabelValues("error").Inc()
 		}
@@ -475,7 +545,7 @@ func responseStatus(status string) string {
 	}
 }
 
-func (s *OrderService) checkLedgerBalance(ctx context.Context, accountID uuid.UUID, side, symbol string, quantity decimal.Decimal, price *decimal.Decimal) (bool, map[string]string, error) {
+func (s *OrderService) checkLedgerBalance(ctx context.Context, orderID, accountID uuid.UUID, side, orderType, symbol string, quantity decimal.Decimal, price *decimal.Decimal) (bool, map[string]string, error) {
 	if s.ledger == nil {
 		return true, nil, nil
 	}
@@ -488,50 +558,98 @@ func (s *OrderService) checkLedgerBalance(ctx context.Context, accountID uuid.UU
 	var asset string
 	var required decimal.Decimal
 
-	switch strings.ToLower(strings.TrimSpace(side)) {
+	side = strings.ToLower(strings.TrimSpace(side))
+	orderType = strings.ToLower(strings.TrimSpace(orderType))
+	switch side {
 	case "sell":
 		asset = base
 		required = quantity
 	case "buy":
 		asset = quote
-		if price == nil {
-			return true, nil, nil
+		if orderType == "market" {
+			refPrice, err := s.marketBuyReferencePrice(ctx, symbol)
+			if err != nil {
+				details := map[string]string{
+					"required_asset": asset,
+				}
+				return false, details, status.Error(codes.FailedPrecondition, "market price unavailable")
+			}
+			required = quantity.Mul(refPrice)
+		} else {
+			if price == nil {
+				return false, nil, status.Error(codes.InvalidArgument, "price is required for buy orders")
+			}
+			required = quantity.Mul(*price)
 		}
-		required = quantity.Mul(*price)
 	default:
 		return true, nil, nil
 	}
 
 	if required.LessThanOrEqual(decimal.Zero) {
-		return true, nil, nil
+		return false, nil, status.Error(codes.InvalidArgument, "required amount must be positive")
 	}
 
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	resp, err := s.ledger.GetBalance(checkCtx, &ledgerpb.GetBalanceRequest{
+	resp, err := s.ledger.ReserveBalance(checkCtx, &ledgerpb.ReserveBalanceRequest{
 		AccountId: accountID.String(),
+		OrderId:   orderID.String(),
 		Asset:     asset,
+		Amount:    required.String(),
 	})
 	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.FailedPrecondition {
+			details := map[string]string{
+				"required_asset":  asset,
+				"required_amount": required.String(),
+			}
+			return false, details, nil
+		}
 		return false, nil, err
-	}
-
-	available, err := decimal.NewFromString(strings.TrimSpace(resp.GetAvailable()))
-	if err != nil {
-		return false, nil, fmt.Errorf("parse ledger available: %w", err)
-	}
-
-	if available.GreaterThanOrEqual(required) {
-		return true, nil, nil
 	}
 
 	details := map[string]string{
 		"required_asset":  asset,
 		"required_amount": required.String(),
-		"available":       available.String(),
+		"available":       strings.TrimSpace(resp.GetAvailable()),
+		"locked":          strings.TrimSpace(resp.GetLocked()),
 	}
-	return false, details, nil
+	return true, details, nil
+}
+
+func (s *OrderService) marketBuyReferencePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	if s.store == nil {
+		return decimal.Zero, fmt.Errorf("store not configured")
+	}
+	price, err := s.store.GetLastTradePrice(ctx, symbol)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if price.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, fmt.Errorf("invalid reference price")
+	}
+	slippage := decimal.NewFromInt(int64(s.marketBuySlippageBps)).Div(decimal.NewFromInt(10000))
+	factor := decimal.NewFromInt(1).Add(slippage)
+	return price.Mul(factor), nil
+}
+
+func (s *OrderService) releaseReservation(ctx context.Context, orderID uuid.UUID) error {
+	if s.ledger == nil {
+		return nil
+	}
+	releaseCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := s.ledger.ReleaseBalance(releaseCtx, &ledgerpb.ReleaseBalanceRequest{
+		OrderId: orderID.String(),
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func splitSymbol(symbol string) (string, string, error) {

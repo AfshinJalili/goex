@@ -1,6 +1,10 @@
 package service
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 type Metrics struct {
 	TierLookups     *prometheus.CounterVec
@@ -8,6 +12,7 @@ type Metrics struct {
 	FeeCalcDuration *prometheus.HistogramVec
 	CacheRefreshDur prometheus.Histogram
 	CacheSize       prometheus.Gauge
+	CacheRefreshErr prometheus.Counter
 }
 
 func NewMetrics(registry *prometheus.Registry) *Metrics {
@@ -47,8 +52,35 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 				Help: "Number of fee tiers cached.",
 			},
 		),
+		CacheRefreshErr: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "cache_refresh_errors_total",
+				Help: "Total cache refresh errors.",
+			},
+		),
 	}
 
-	registry.MustRegister(m.TierLookups, m.FeeCalculations, m.FeeCalcDuration, m.CacheRefreshDur, m.CacheSize)
+	registry.MustRegister(m.TierLookups, m.FeeCalculations, m.FeeCalcDuration, m.CacheRefreshDur, m.CacheSize, m.CacheRefreshErr)
 	return m
+}
+
+func (m *Metrics) ObserveRefresh(duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.CacheRefreshDur.Observe(duration.Seconds())
+}
+
+func (m *Metrics) SetCacheSize(size int) {
+	if m == nil {
+		return
+	}
+	m.CacheSize.Set(float64(size))
+}
+
+func (m *Metrics) IncRefreshError() {
+	if m == nil {
+		return
+	}
+	m.CacheRefreshErr.Inc()
 }

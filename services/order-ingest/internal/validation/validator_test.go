@@ -16,6 +16,7 @@ func TestValidateOrderRequest(t *testing.T) {
 		{"valid limit", "BTC-USD", "buy", "limit", "GTC", "1.5", "100", true},
 		{"valid market", "BTC-USD", "sell", "market", "IOC", "2", "", true},
 		{"valid market with price", "BTC-USD", "sell", "market", "IOC", "2", "101", true},
+		{"valid market buy missing price", "BTC-USD", "buy", "market", "IOC", "2", "", true},
 		{"missing symbol", "", "buy", "limit", "GTC", "1", "100", false},
 		{"bad side", "BTC-USD", "hold", "limit", "GTC", "1", "100", false},
 		{"bad type", "BTC-USD", "buy", "stop", "GTC", "1", "100", false},

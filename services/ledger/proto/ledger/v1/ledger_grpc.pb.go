@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Ledger_GetBalance_FullMethodName      = "/ledger.v1.Ledger/GetBalance"
+	Ledger_ReserveBalance_FullMethodName  = "/ledger.v1.Ledger/ReserveBalance"
+	Ledger_ReleaseBalance_FullMethodName  = "/ledger.v1.Ledger/ReleaseBalance"
 	Ledger_ApplySettlement_FullMethodName = "/ledger.v1.Ledger/ApplySettlement"
 )
 
@@ -28,6 +30,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LedgerClient interface {
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
+	ReserveBalance(ctx context.Context, in *ReserveBalanceRequest, opts ...grpc.CallOption) (*ReserveBalanceResponse, error)
+	ReleaseBalance(ctx context.Context, in *ReleaseBalanceRequest, opts ...grpc.CallOption) (*ReleaseBalanceResponse, error)
 	ApplySettlement(ctx context.Context, in *ApplySettlementRequest, opts ...grpc.CallOption) (*ApplySettlementResponse, error)
 }
 
@@ -49,6 +53,26 @@ func (c *ledgerClient) GetBalance(ctx context.Context, in *GetBalanceRequest, op
 	return out, nil
 }
 
+func (c *ledgerClient) ReserveBalance(ctx context.Context, in *ReserveBalanceRequest, opts ...grpc.CallOption) (*ReserveBalanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReserveBalanceResponse)
+	err := c.cc.Invoke(ctx, Ledger_ReserveBalance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ledgerClient) ReleaseBalance(ctx context.Context, in *ReleaseBalanceRequest, opts ...grpc.CallOption) (*ReleaseBalanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseBalanceResponse)
+	err := c.cc.Invoke(ctx, Ledger_ReleaseBalance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *ledgerClient) ApplySettlement(ctx context.Context, in *ApplySettlementRequest, opts ...grpc.CallOption) (*ApplySettlementResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ApplySettlementResponse)
@@ -64,6 +88,8 @@ func (c *ledgerClient) ApplySettlement(ctx context.Context, in *ApplySettlementR
 // for forward compatibility.
 type LedgerServer interface {
 	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
+	ReserveBalance(context.Context, *ReserveBalanceRequest) (*ReserveBalanceResponse, error)
+	ReleaseBalance(context.Context, *ReleaseBalanceRequest) (*ReleaseBalanceResponse, error)
 	ApplySettlement(context.Context, *ApplySettlementRequest) (*ApplySettlementResponse, error)
 	mustEmbedUnimplementedLedgerServer()
 }
@@ -77,6 +103,12 @@ type UnimplementedLedgerServer struct{}
 
 func (UnimplementedLedgerServer) GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBalance not implemented")
+}
+func (UnimplementedLedgerServer) ReserveBalance(context.Context, *ReserveBalanceRequest) (*ReserveBalanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReserveBalance not implemented")
+}
+func (UnimplementedLedgerServer) ReleaseBalance(context.Context, *ReleaseBalanceRequest) (*ReleaseBalanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleaseBalance not implemented")
 }
 func (UnimplementedLedgerServer) ApplySettlement(context.Context, *ApplySettlementRequest) (*ApplySettlementResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApplySettlement not implemented")
@@ -120,6 +152,42 @@ func _Ledger_GetBalance_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Ledger_ReserveBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveBalanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServer).ReserveBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Ledger_ReserveBalance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServer).ReserveBalance(ctx, req.(*ReserveBalanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Ledger_ReleaseBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseBalanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServer).ReleaseBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Ledger_ReleaseBalance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServer).ReleaseBalance(ctx, req.(*ReleaseBalanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Ledger_ApplySettlement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ApplySettlementRequest)
 	if err := dec(in); err != nil {
@@ -148,6 +216,14 @@ var Ledger_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBalance",
 			Handler:    _Ledger_GetBalance_Handler,
+		},
+		{
+			MethodName: "ReserveBalance",
+			Handler:    _Ledger_ReserveBalance_Handler,
+		},
+		{
+			MethodName: "ReleaseBalance",
+			Handler:    _Ledger_ReleaseBalance_Handler,
 		},
 		{
 			MethodName: "ApplySettlement",

@@ -6,6 +6,8 @@ option go_package = "github.com/AfshinJalili/goex/services/ledger/proto/ledger/v
 
 service Ledger {
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc ReserveBalance(ReserveBalanceRequest) returns (ReserveBalanceResponse);
+  rpc ReleaseBalance(ReleaseBalanceRequest) returns (ReleaseBalanceResponse);
   rpc ApplySettlement(ApplySettlementRequest) returns (ApplySettlementResponse);
 }
 
@@ -22,14 +24,45 @@ message GetBalanceResponse {
   string updated_at = 5;
 }
 
+message ReserveBalanceRequest {
+  string account_id = 1;
+  string order_id = 2;
+  string asset = 3;
+  string amount = 4;
+}
+
+message ReserveBalanceResponse {
+  bool success = 1;
+  string reservation_id = 2;
+  string account_id = 3;
+  string asset = 4;
+  string amount = 5;
+  string available = 6;
+  string locked = 7;
+}
+
+message ReleaseBalanceRequest {
+  string order_id = 1;
+}
+
+message ReleaseBalanceResponse {
+  bool success = 1;
+  string order_id = 2;
+  string account_id = 3;
+  string asset = 4;
+  string released_amount = 5;
+}
+
 message ApplySettlementRequest {
   string trade_id = 1;
-  string maker_account_id = 2;
-  string taker_account_id = 3;
-  string symbol = 4;
-  string price = 5;
-  string quantity = 6;
-  string maker_side = 7;
+  string maker_order_id = 2;
+  string taker_order_id = 3;
+  string maker_account_id = 4;
+  string taker_account_id = 5;
+  string symbol = 6;
+  string price = 7;
+  string quantity = 8;
+  string maker_side = 9;
 }
 
 message ApplySettlementResponse {

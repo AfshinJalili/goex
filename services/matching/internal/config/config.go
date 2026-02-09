@@ -29,6 +29,7 @@ type KafkaTopics struct {
 	OrdersAccepted  string
 	OrdersCancelled string
 	TradesExecuted  string
+	DeadLetter      string
 }
 
 type KafkaConfig struct {
@@ -71,6 +72,7 @@ func Load() (*Config, error) {
 	v.SetDefault("kafka.topics.orders_accepted", "orders.accepted")
 	v.SetDefault("kafka.topics.orders_cancelled", "orders.cancelled")
 	v.SetDefault("kafka.topics.trades_executed", "trades.executed")
+	v.SetDefault("kafka.topics.dead_letter", "dead_letter")
 	v.SetDefault("postgres.host", "localhost")
 	v.SetDefault("postgres.port", 5432)
 	v.SetDefault("postgres.database", "cex_core")
@@ -99,6 +101,7 @@ func Load() (*Config, error) {
 				OrdersAccepted:  envString("KAFKA_ORDERS_ACCEPTED_TOPIC", v.GetString("kafka.topics.orders_accepted")),
 				OrdersCancelled: envString("KAFKA_ORDERS_CANCELLED_TOPIC", v.GetString("kafka.topics.orders_cancelled")),
 				TradesExecuted:  envString("KAFKA_TRADES_TOPIC", v.GetString("kafka.topics.trades_executed")),
+				DeadLetter:      envString("KAFKA_DLQ_TOPIC", v.GetString("kafka.topics.dead_letter")),
 			},
 		},
 	}

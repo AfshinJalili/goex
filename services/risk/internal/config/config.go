@@ -32,11 +32,12 @@ type CacheConfig struct {
 }
 
 type Config struct {
-	App           base.AppConfig
-	DB            DBConfig
-	GRPC          GRPCConfig
-	LedgerService ServiceConfig
-	Cache         CacheConfig
+	App                  base.AppConfig
+	DB                   DBConfig
+	GRPC                 GRPCConfig
+	LedgerService        ServiceConfig
+	Cache                CacheConfig
+	MarketBuySlippageBps int
 }
 
 func Load() (*Config, error) {
@@ -65,6 +66,7 @@ func Load() (*Config, error) {
 		Cache: CacheConfig{
 			RefreshInterval: envDuration("CEX_CACHE_REFRESH_INTERVAL", 5*time.Minute),
 		},
+		MarketBuySlippageBps: envInt("MARKET_BUY_SLIPPAGE_BPS", 50),
 	}
 
 	if cfg.GRPC.Port <= 0 {
@@ -72,6 +74,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.LedgerService.GRPCAddr == "" {
 		return nil, fmt.Errorf("LEDGER_SERVICE_ADDR must be set")
+	}
+	if cfg.MarketBuySlippageBps < 0 {
+		return nil, fmt.Errorf("market_buy_slippage_bps must be non-negative")
 	}
 
 	return cfg, nil

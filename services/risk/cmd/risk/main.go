@@ -92,7 +92,7 @@ func main() {
 	defer refreshCancel()
 	go refreshMarketCache(refreshCtx, marketCache, store, cfg.Cache.RefreshInterval, riskMetrics, logger)
 
-	riskService := service.NewRiskService(store, marketCache, logger, riskMetrics)
+	riskService := service.NewRiskService(store, marketCache, logger, riskMetrics, cfg.MarketBuySlippageBps)
 
 	grpcServer := grpc.NewServer()
 	riskpb.RegisterRiskServer(grpcServer, riskService)

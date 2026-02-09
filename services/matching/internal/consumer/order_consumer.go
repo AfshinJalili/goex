@@ -54,6 +54,7 @@ type OrderConsumer struct {
 	engine         Engine
 	logger         *slog.Logger
 	deduper        *eventDeduper
+	orderDeduper   *eventDeduper
 	acceptedTopic  string
 	cancelledTopic string
 }
@@ -72,6 +73,7 @@ func NewOrderConsumer(engine Engine, logger *slog.Logger, acceptedTopic, cancell
 		engine:         engine,
 		logger:         logger,
 		deduper:        newEventDeduper(100000),
+		orderDeduper:   newEventDeduper(200000),
 		acceptedTopic:  acceptedTopic,
 		cancelledTopic: cancelledTopic,
 	}
@@ -79,7 +81,7 @@ func NewOrderConsumer(engine Engine, logger *slog.Logger, acceptedTopic, cancell
 
 func (c *OrderConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
 	if msg == nil || len(msg.Value) == 0 {
-		return fmt.Errorf("empty kafka message")
+		return kafka.DLQ(fmt.Errorf("empty kafka message"), "empty_message")
 	}
 
 	switch msg.Topic {
@@ -95,24 +97,31 @@ func (c *OrderConsumer) HandleMessage(ctx context.Context, msg *sarama.ConsumerM
 func (c *OrderConsumer) handleOrderAccepted(ctx context.Context, payload []byte) error {
 	var event OrderAcceptedEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return fmt.Errorf("decode orders.accepted: %w", err)
+		return kafka.DLQ(fmt.Errorf("decode orders.accepted: %w", err), "decode")
 	}
 	if err := event.Validate(); err != nil {
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 	if c.deduper.Seen(event.EventID) {
+		return nil
+	}
+	orderID := strings.TrimSpace(event.OrderID)
+	if orderID == "" {
+		return kafka.DLQ(fmt.Errorf("order_id required"), "invalid_event")
+	}
+	if c.orderDeduper.Seen(orderID) {
 		return nil
 	}
 
 	qty, err := decimal.NewFromString(strings.TrimSpace(event.Quantity))
 	if err != nil {
-		return fmt.Errorf("invalid quantity: %w", err)
+		return kafka.DLQ(fmt.Errorf("invalid quantity: %w", err), "invalid_event")
 	}
 	price := decimal.Zero
 	if strings.TrimSpace(event.Price) != "" {
 		price, err = decimal.NewFromString(strings.TrimSpace(event.Price))
 		if err != nil {
-			return fmt.Errorf("invalid price: %w", err)
+			return kafka.DLQ(fmt.Errorf("invalid price: %w", err), "invalid_event")
 		}
 	}
 
@@ -124,7 +133,7 @@ func (c *OrderConsumer) handleOrderAccepted(ctx context.Context, payload []byte)
 	}
 
 	order := &engine.Order{
-		ID:            strings.TrimSpace(event.OrderID),
+		ID:            orderID,
 		ClientOrderID: strings.TrimSpace(event.ClientOrderID),
 		AccountID:     strings.TrimSpace(event.AccountID),
 		Symbol:        strings.TrimSpace(event.Symbol),
@@ -145,16 +154,17 @@ func (c *OrderConsumer) handleOrderAccepted(ctx context.Context, payload []byte)
 	}
 
 	c.deduper.Mark(event.EventID)
+	c.orderDeduper.Mark(orderID)
 	return nil
 }
 
 func (c *OrderConsumer) handleOrderCancelled(ctx context.Context, payload []byte) error {
 	var event OrderCancelledEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return fmt.Errorf("decode orders.cancelled: %w", err)
+		return kafka.DLQ(fmt.Errorf("decode orders.cancelled: %w", err), "decode")
 	}
 	if err := event.Validate(); err != nil {
-		return err
+		return kafka.DLQ(err, "invalid_event")
 	}
 	if c.deduper.Seen(event.EventID) {
 		return nil

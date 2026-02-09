@@ -163,6 +163,9 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 			case codes.NotFound:
 				writeError(c, http.StatusBadRequest, "INVALID_REQUEST", st.Message(), nil, nil, nil)
 				return
+			case codes.FailedPrecondition:
+				writeError(c, http.StatusBadRequest, "INVALID_REQUEST", st.Message(), nil, nil, nil)
+				return
 			}
 		}
 		h.Logger.Error("submit order failed", "error", err)

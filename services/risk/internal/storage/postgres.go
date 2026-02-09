@@ -122,3 +122,33 @@ func (s *Store) CheckBalance(ctx context.Context, accountID uuid.UUID, asset str
 		Sufficient: available.GreaterThanOrEqual(required),
 	}, nil
 }
+
+func (s *Store) GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return decimal.Zero, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT price::text
+		FROM trades
+		WHERE symbol = $1
+		ORDER BY executed_at DESC
+		LIMIT 1
+	`, symbol)
+
+	var priceStr string
+	if err := row.Scan(&priceStr); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return decimal.Zero, ErrNotFound
+		}
+		return decimal.Zero, err
+	}
+	price, err := decimal.NewFromString(strings.TrimSpace(priceStr))
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("parse trade price: %w", err)
+	}
+	if price.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, ErrNotFound
+	}
+	return price, nil
+}

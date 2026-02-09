@@ -16,6 +16,9 @@ import (
 type fakeStore struct {
 	balance          storage.LedgerAccount
 	balanceErr       error
+	reservation      *storage.BalanceReservation
+	reserveErr       error
+	releaseErr       error
 	settlementResult *storage.SettlementResult
 	settlementErr    error
 	lastReq          storage.SettlementRequest
@@ -24,6 +27,35 @@ type fakeStore struct {
 
 func (f *fakeStore) GetBalance(ctx context.Context, accountID uuid.UUID, asset string) (storage.LedgerAccount, error) {
 	return f.balance, f.balanceErr
+}
+
+func (f *fakeStore) ReserveBalance(ctx context.Context, accountID, orderID uuid.UUID, asset string, amount decimal.Decimal) (*storage.BalanceReservation, error) {
+	if f.reserveErr != nil {
+		return nil, f.reserveErr
+	}
+	if f.reservation != nil {
+		return f.reservation, nil
+	}
+	return &storage.BalanceReservation{
+		ID:             uuid.New(),
+		OrderID:        orderID,
+		AccountID:      accountID,
+		Asset:          asset,
+		Amount:         amount,
+		ConsumedAmount: decimal.Zero,
+		Status:         "active",
+	}, nil
+}
+
+func (f *fakeStore) ReleaseReservation(ctx context.Context, orderID uuid.UUID) (*storage.BalanceReservation, decimal.Decimal, error) {
+	if f.releaseErr != nil {
+		return nil, decimal.Zero, f.releaseErr
+	}
+	res := f.reservation
+	if res == nil {
+		res = &storage.BalanceReservation{OrderID: orderID, AccountID: uuid.New(), Asset: "USD", Amount: decimal.NewFromInt(1)}
+	}
+	return res, res.Amount, nil
 }
 
 func (f *fakeStore) ApplySettlement(ctx context.Context, req storage.SettlementRequest) (*storage.SettlementResult, error) {
@@ -73,6 +105,85 @@ func TestGetBalanceSuccess(t *testing.T) {
 	}
 	if resp.Locked != "5" {
 		t.Fatalf("expected locked 5, got %s", resp.Locked)
+	}
+}
+
+func TestReserveBalanceSuccess(t *testing.T) {
+	accountID := uuid.New()
+	orderID := uuid.New()
+	store := &fakeStore{
+		balance: storage.LedgerAccount{
+			AccountID:        accountID,
+			Asset:            "USD",
+			BalanceAvailable: decimal.NewFromInt(50),
+			BalanceLocked:    decimal.NewFromInt(50),
+		},
+		reservation: &storage.BalanceReservation{
+			ID:             uuid.New(),
+			OrderID:        orderID,
+			AccountID:      accountID,
+			Asset:          "USD",
+			Amount:         decimal.NewFromInt(50),
+			ConsumedAmount: decimal.Zero,
+			Status:         "active",
+		},
+	}
+
+	svc := NewLedgerService(store, slog.Default(), nil)
+	resp, err := svc.ReserveBalance(context.Background(), &ledgerpb.ReserveBalanceRequest{
+		AccountId: accountID.String(),
+		OrderId:   orderID.String(),
+		Asset:     "USD",
+		Amount:    "50",
+	})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success true")
+	}
+	if resp.Available != "50" || resp.Locked != "50" {
+		t.Fatalf("unexpected balances %s/%s", resp.Available, resp.Locked)
+	}
+}
+
+func TestReserveBalanceInsufficient(t *testing.T) {
+	accountID := uuid.New()
+	store := &fakeStore{reserveErr: storage.ErrInsufficientBalance}
+	svc := NewLedgerService(store, slog.Default(), nil)
+	_, err := svc.ReserveBalance(context.Background(), &ledgerpb.ReserveBalanceRequest{
+		AccountId: accountID.String(),
+		OrderId:   uuid.New().String(),
+		Asset:     "USD",
+		Amount:    "100",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition, got %v", status.Code(err))
+	}
+}
+
+func TestReleaseBalanceSuccess(t *testing.T) {
+	orderID := uuid.New()
+	store := &fakeStore{
+		reservation: &storage.BalanceReservation{
+			OrderID:   orderID,
+			AccountID: uuid.New(),
+			Asset:     "USD",
+			Amount:    decimal.NewFromInt(10),
+		},
+	}
+	svc := NewLedgerService(store, slog.Default(), nil)
+	resp, err := svc.ReleaseBalance(context.Background(), &ledgerpb.ReleaseBalanceRequest{
+		OrderId: orderID.String(),
+	})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success true")
+	}
+	if resp.OrderId != orderID.String() {
+		t.Fatalf("expected order id %s got %s", orderID, resp.OrderId)
 	}
 }
 

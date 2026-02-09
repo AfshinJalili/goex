@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AfshinJalili/goex/services/risk/internal/storage"
 	riskpb "github.com/AfshinJalili/goex/services/risk/proto/risk/v1"
@@ -15,14 +17,16 @@ import (
 )
 
 type fakeStore struct {
-	account      *storage.AccountInfo
-	accountErr   error
-	market       *storage.Market
-	marketErr    error
-	balance      *storage.BalanceCheck
-	balanceErr   error
-	marketCalls  int
-	balanceCalls int
+	account        *storage.AccountInfo
+	accountErr     error
+	market         *storage.Market
+	marketErr      error
+	balance        *storage.BalanceCheck
+	balanceErr     error
+	marketCalls    int
+	balanceCalls   int
+	lastTradePrice decimal.Decimal
+	lastTradeErr   error
 }
 
 func (f *fakeStore) GetAccountInfo(ctx context.Context, accountID uuid.UUID) (*storage.AccountInfo, error) {
@@ -37,6 +41,16 @@ func (f *fakeStore) GetMarketBySymbol(ctx context.Context, symbol string) (*stor
 func (f *fakeStore) CheckBalance(ctx context.Context, accountID uuid.UUID, asset string, required decimal.Decimal) (*storage.BalanceCheck, error) {
 	f.balanceCalls++
 	return f.balance, f.balanceErr
+}
+
+func (f *fakeStore) GetLastTradePrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	if f.lastTradeErr != nil {
+		return decimal.Zero, f.lastTradeErr
+	}
+	if f.lastTradePrice.IsZero() {
+		return decimal.Zero, storage.ErrNotFound
+	}
+	return f.lastTradePrice, nil
 }
 
 type fakeCache struct {
@@ -77,14 +91,44 @@ func TestPreTradeCheckScenarios(t *testing.T) {
 			balanceCalls:  1,
 		},
 		{
-			name: "valid market buy without price",
+			name: "market buy without price uses reference",
 			store: &fakeStore{
-				account: activeAccount,
-				market:  activeMarket,
-				balance: &storage.BalanceCheck{Sufficient: true},
+				account:        activeAccount,
+				market:         activeMarket,
+				balance:        &storage.BalanceCheck{Sufficient: true},
+				lastTradePrice: decimal.RequireFromString("100"),
 			},
 			cache:         &fakeCache{market: activeMarket, hit: true},
 			req:           marketRequest(accountID),
+			expectAllowed: true,
+			expectCode:    codes.OK,
+			balanceCalls:  1,
+		},
+		{
+			name: "market buy without price missing reference",
+			store: &fakeStore{
+				account:      activeAccount,
+				market:       activeMarket,
+				balance:      &storage.BalanceCheck{Sufficient: true},
+				lastTradeErr: storage.ErrNotFound,
+			},
+			cache:         &fakeCache{market: activeMarket, hit: true},
+			req:           marketRequest(accountID),
+			expectAllowed: false,
+			expectReason:  "market_price_unavailable",
+			expectCode:    codes.OK,
+			balanceCalls:  0,
+		},
+		{
+			name: "valid market buy with price",
+			store: &fakeStore{
+				account:        activeAccount,
+				market:         activeMarket,
+				balance:        &storage.BalanceCheck{Sufficient: true},
+				lastTradePrice: decimal.RequireFromString("100"),
+			},
+			cache:         &fakeCache{market: activeMarket, hit: true},
+			req:           marketRequestWithPrice(accountID),
 			expectAllowed: true,
 			expectCode:    codes.OK,
 			balanceCalls:  1,
@@ -162,7 +206,7 @@ func TestPreTradeCheckScenarios(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			svc := NewRiskService(test.store, test.cache, slog.Default(), nil)
+			svc := NewRiskService(test.store, test.cache, slog.Default(), nil, 50)
 			resp, err := svc.PreTradeCheck(context.Background(), test.req)
 			if test.expectCode != codes.OK {
 				if status.Code(err) != test.expectCode {
@@ -196,7 +240,7 @@ func TestPreTradeCheckScenarios(t *testing.T) {
 }
 
 func TestPreTradeCheckInvalidInput(t *testing.T) {
-	svc := NewRiskService(&fakeStore{}, &fakeCache{}, slog.Default(), nil)
+	svc := NewRiskService(&fakeStore{}, &fakeCache{}, slog.Default(), nil, 50)
 	_, err := svc.PreTradeCheck(context.Background(), &riskpb.PreTradeCheckRequest{
 		AccountId: "invalid",
 		Symbol:    "BTC-USD",
@@ -218,7 +262,7 @@ func TestPreTradeCheckCacheMissCallsStore(t *testing.T) {
 		balance: &storage.BalanceCheck{Sufficient: true},
 	}
 	cache := &fakeCache{hit: false}
-	svc := NewRiskService(store, cache, slog.Default(), nil)
+	svc := NewRiskService(store, cache, slog.Default(), nil, 50)
 
 	_, err := svc.PreTradeCheck(context.Background(), validRequest(accountID))
 	if err != nil {
@@ -226,6 +270,34 @@ func TestPreTradeCheckCacheMissCallsStore(t *testing.T) {
 	}
 	if store.marketCalls == 0 {
 		t.Fatalf("expected market lookup on cache miss")
+	}
+}
+
+func TestPreTradeCheckCircuitBreaker(t *testing.T) {
+	accountID := uuid.New()
+	activeAccount := &storage.AccountInfo{ID: accountID, UserID: uuid.New(), Status: "active", KYCLevel: "verified"}
+	activeMarket := &storage.Market{ID: uuid.New(), Symbol: "BTC-USD", BaseAsset: "BTC", QuoteAsset: "USD", Status: "active"}
+
+	store := &fakeStore{
+		account:    activeAccount,
+		market:     activeMarket,
+		balanceErr: errors.New("ledger down"),
+	}
+	cache := &fakeCache{market: activeMarket, hit: true}
+	svc := NewRiskService(store, cache, slog.Default(), nil, 50)
+	svc.balanceBreaker = newCircuitBreaker(1, time.Minute)
+
+	_, err := svc.PreTradeCheck(context.Background(), validRequest(accountID))
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected internal on first failure, got %v", status.Code(err))
+	}
+
+	_, err = svc.PreTradeCheck(context.Background(), validRequest(accountID))
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected unavailable after breaker opens, got %v", status.Code(err))
+	}
+	if store.balanceCalls != 1 {
+		t.Fatalf("expected one balance call, got %d", store.balanceCalls)
 	}
 }
 
@@ -237,7 +309,7 @@ func TestPreTradeCheckConcurrent(t *testing.T) {
 		balance: &storage.BalanceCheck{Sufficient: true},
 	}
 	cache := &fakeCache{market: store.market, hit: true}
-	svc := NewRiskService(store, cache, slog.Default(), nil)
+	svc := NewRiskService(store, cache, slog.Default(), nil, 50)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -271,5 +343,16 @@ func marketRequest(accountID uuid.UUID) *riskpb.PreTradeCheckRequest {
 		OrderType: "market",
 		Quantity:  "1",
 		Price:     "",
+	}
+}
+
+func marketRequestWithPrice(accountID uuid.UUID) *riskpb.PreTradeCheckRequest {
+	return &riskpb.PreTradeCheckRequest{
+		AccountId: accountID.String(),
+		Symbol:    "BTC-USD",
+		Side:      "buy",
+		OrderType: "market",
+		Quantity:  "1",
+		Price:     "100",
 	}
 }

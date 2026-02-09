@@ -30,6 +30,7 @@ type KafkaTopics struct {
 	OrdersRejected  string
 	OrdersCancelled string
 	TradesExecuted  string
+	DeadLetter      string
 }
 
 type KafkaConfig struct {
@@ -43,13 +44,14 @@ type ServiceConfig struct {
 }
 
 type Config struct {
-	App           base.AppConfig
-	DB            DBConfig
-	GRPC          GRPCConfig
-	Kafka         KafkaConfig
-	RiskService   ServiceConfig
-	LedgerService ServiceConfig
-	JWTSecret     string
+	App                  base.AppConfig
+	DB                   DBConfig
+	GRPC                 GRPCConfig
+	Kafka                KafkaConfig
+	RiskService          ServiceConfig
+	LedgerService        ServiceConfig
+	JWTSecret            string
+	MarketBuySlippageBps int
 }
 
 func Load() (*Config, error) {
@@ -80,9 +82,11 @@ func Load() (*Config, error) {
 	v.SetDefault("kafka.topics.orders_rejected", "orders.rejected")
 	v.SetDefault("kafka.topics.orders_cancelled", "orders.cancelled")
 	v.SetDefault("kafka.topics.trades_executed", "trades.executed")
+	v.SetDefault("kafka.topics.dead_letter", "dead_letter")
 	v.SetDefault("risk_service.grpc_addr", "risk:9090")
 	v.SetDefault("ledger_service.grpc_addr", "ledger:9091")
 	v.SetDefault("jwt_secret", "")
+	v.SetDefault("market_buy_slippage_bps", 50)
 
 	kafkaBrokers := envCSV("KAFKA_BROKERS", v.GetStringSlice("kafka.brokers"))
 	kafkaConsumer := envString("KAFKA_CONSUMER_GROUP", v.GetString("kafka.consumer_group"))
@@ -90,9 +94,11 @@ func Load() (*Config, error) {
 	topicRejected := envString("KAFKA_ORDERS_REJECTED_TOPIC", v.GetString("kafka.topics.orders_rejected"))
 	topicCancelled := envString("KAFKA_ORDERS_CANCELLED_TOPIC", v.GetString("kafka.topics.orders_cancelled"))
 	topicTrades := envString("KAFKA_TRADES_TOPIC", v.GetString("kafka.topics.trades_executed"))
+	topicDLQ := envString("KAFKA_DLQ_TOPIC", v.GetString("kafka.topics.dead_letter"))
 	riskAddr := envString("RISK_SERVICE_GRPC_ADDR", v.GetString("risk_service.grpc_addr"))
 	ledgerAddr := envString("LEDGER_SERVICE_GRPC_ADDR", v.GetString("ledger_service.grpc_addr"))
 	jwtSecret := envString("JWT_SECRET", v.GetString("jwt_secret"))
+	marketSlippage := envInt("MARKET_BUY_SLIPPAGE_BPS", v.GetInt("market_buy_slippage_bps"))
 
 	cfg := &Config{
 		App: *appCfg,
@@ -116,11 +122,13 @@ func Load() (*Config, error) {
 				OrdersRejected:  topicRejected,
 				OrdersCancelled: topicCancelled,
 				TradesExecuted:  topicTrades,
+				DeadLetter:      topicDLQ,
 			},
 		},
-		RiskService:   ServiceConfig{GRPCAddr: riskAddr},
-		LedgerService: ServiceConfig{GRPCAddr: ledgerAddr},
-		JWTSecret:     jwtSecret,
+		RiskService:          ServiceConfig{GRPCAddr: riskAddr},
+		LedgerService:        ServiceConfig{GRPCAddr: ledgerAddr},
+		JWTSecret:            jwtSecret,
+		MarketBuySlippageBps: marketSlippage,
 	}
 
 	if cfg.GRPC.Port <= 0 {
@@ -140,6 +148,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.LedgerService.GRPCAddr == "" {
 		return nil, fmt.Errorf("ledger service grpc addr required")
+	}
+	if cfg.MarketBuySlippageBps < 0 {
+		return nil, fmt.Errorf("market_buy_slippage_bps must be non-negative")
 	}
 
 	return cfg, nil

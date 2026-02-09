@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,19 +97,24 @@ func main() {
 		os.Exit(1)
 	}
 	defer producer.Close()
+	publisher := kafka.Publisher(producer)
+	if strings.TrimSpace(cfg.Kafka.Topics.DeadLetter) != "" {
+		publisher = kafka.NewDLQPublisher(producer, producer, cfg.Kafka.Topics.DeadLetter, logger)
+	}
 
 	consumerGroup, err := kafka.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup, logger)
 	if err != nil {
 		logger.Error("kafka consumer init failed", "error", err)
 		os.Exit(1)
 	}
+	consumerGroup.WithDLQ(producer, cfg.Kafka.Topics.DeadLetter)
 	defer consumerGroup.Close()
 
-	orderSvc := service.NewOrderService(store, riskClient, ledgerClient, producer, logger, orderMetrics, service.Topics{
+	orderSvc := service.NewOrderService(store, riskClient, ledgerClient, publisher, logger, orderMetrics, service.Topics{
 		OrdersAccepted:  cfg.Kafka.Topics.OrdersAccepted,
 		OrdersRejected:  cfg.Kafka.Topics.OrdersRejected,
 		OrdersCancelled: cfg.Kafka.Topics.OrdersCancelled,
-	})
+	}, cfg.MarketBuySlippageBps)
 
 	handler := handlers.New(orderSvc, logger)
 	router := gin.New()
@@ -131,7 +137,7 @@ func main() {
 		IdleTimeout:  cfg.App.HTTP.IdleTimeout,
 	}
 
-	tradeConsumer := consumer.NewTradeConsumer(store, logger, orderMetrics)
+	tradeConsumer := consumer.NewTradeConsumer(store, ledgerClient, logger, orderMetrics)
 
 	ready.SetReady(true)
 
